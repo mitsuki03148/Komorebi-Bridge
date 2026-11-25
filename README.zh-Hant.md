@@ -68,10 +68,12 @@ flowchart TB
 
 只要先接上其中一個 CLI 就能開始使用，日後隨時可補裝其餘工具。
 
+選用工具：GitHub 面板需要 [GitHub CLI](https://cli.github.com/)（`gh`，並以 `gh auth login` 登入）；Drive 面板需要 [Google Drive 電腦版](https://www.google.com/drive/download/)。
+
 ## 快速安裝與啟動
 
 ```bash
-git clone <repo-url> komorebi-bridge
+git clone https://github.com/mitsuki03148/Komorebi-Bridge.git komorebi-bridge
 cd komorebi-bridge
 npm ci
 npm run build
@@ -79,6 +81,21 @@ npm run dev
 ```
 
 完成後，在瀏覽器開啟 `http://localhost:3000`。
+
+### 請你的 agent 幫忙安裝
+
+如果手邊已經有運作中的 Claude Code、Codex 或 Gemini CLI，也可以直接把這段提示貼給它代勞：
+
+```text
+請幫我安裝並啟動 Komorebi Bridge（放在目前資料夾或 ~/komorebi-bridge）：
+1. 先檢查 macOS、Node.js（^20.19.0 或 >=22.12.0）與 Xcode Command Line Tools。
+2. 執行 git clone https://github.com/mitsuki03148/Komorebi-Bridge.git komorebi-bridge。
+3. 進入該資料夾，依序執行 npm ci、npm run build、npm run dev。
+4. 啟動完成後回報本機網址（預設 http://localhost:3000）。
+5. 不要更改系統全域設定，也不要使用 sudo。
+6. 每一步簡短說明做了什麼；遇到任何錯誤就停下來問我。
+7. 問我是否需要選用的 GitHub 面板（`gh`）或 Drive 面板（Google Drive 電腦版）；需要的話告訴我要安裝什麼，登入由我自己完成。
+```
 
 - **環境設定與預設值**：設定寫在安裝資料夾內的選用檔案 `.env.komorebi-local`（每行一個 `KEY=value`，不會納入 Git）。全部可不填：
 

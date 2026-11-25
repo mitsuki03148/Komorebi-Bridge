@@ -68,10 +68,12 @@ flowchart TB
 
 You can start with a single CLI and add the others later.
 
+Optional extras: [GitHub CLI](https://cli.github.com/) (`gh`, signed in with `gh auth login`) for the GitHub panel, and [Google Drive for desktop](https://www.google.com/drive/download/) for the Drive panel.
+
 ## Quick Start
 
 ```bash
-git clone <repo-url> komorebi-bridge
+git clone https://github.com/mitsuki03148/Komorebi-Bridge.git komorebi-bridge
 cd komorebi-bridge
 npm ci
 npm run build
@@ -79,6 +81,21 @@ npm run dev
 ```
 
 Open `http://localhost:3000` in your browser.
+
+### Install with your agent
+
+If you already have Claude Code, Codex, or Gemini CLI running, you can hand the setup to it by pasting this prompt:
+
+```text
+Please install and start Komorebi Bridge in this folder (or ~/komorebi-bridge):
+1. Check macOS, Node.js (^20.19.0 or >=22.12.0), and Xcode Command Line Tools first.
+2. Clone https://github.com/mitsuki03148/Komorebi-Bridge.git into komorebi-bridge.
+3. Run `npm ci`, `npm run build`, and `npm run dev` inside that folder.
+4. Once it is listening, report the local URL (default http://localhost:3000).
+5. Do not change global settings or use `sudo`.
+6. Explain briefly what you did at each step, and stop to ask me if anything fails.
+7. Ask whether I want the optional GitHub panel (`gh`) or Drive panel (Google Drive for desktop). If yes, tell me what to install; I will sign in myself.
+```
 
 - **Configuration & defaults**: settings go in an optional file `.env.komorebi-local` in the install folder (one `KEY=value` per line; it is not tracked by Git). All are optional:
 
