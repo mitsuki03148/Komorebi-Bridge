@@ -1,0 +1,4 @@
+#!/bin/zsh
+# Hand work to another agent's room through the Komorebi Bridge. See scripts/komorebi-room.ts for the commands.
+caller_dir="$PWD"
+cd "${0:A:h}/.." && KOMOREBI_CALLER_DIR="$caller_dir" exec node --import tsx scripts/komorebi-room.ts "$@"

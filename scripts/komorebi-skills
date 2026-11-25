@@ -1,0 +1,5 @@
+#!/bin/zsh
+# Share skills between the three CLIs through one folder. See scripts/komorebi-skills.ts for the commands.
+cd "${0:A:h}/.." || exit 1
+if [[ -r .env.komorebi-local ]]; then set -a; source .env.komorebi-local; set +a; fi
+exec node --import tsx scripts/komorebi-skills.ts "$@"

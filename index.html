@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-HK">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#FBF8F3" />
+    <meta name="color-scheme" content="light" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>Komorebi Bridge</title>
+    <meta name="application-name" content="Komorebi Bridge" />
+    <meta name="apple-mobile-web-app-title" content="Komorebi Bridge" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="description" content="溫馨 2D 動漫冒險者公會風格的 Mac Terminal 與 AI CLI 總管，由「瞳 (AGY)」、「光 (Codex)」、「響 (Claude Code)」三位角色坐鎮，支援本地 App 資料夾同步、HP/MP 額度監控及預設開啟遠端 App 即時看房與 Approve。" />
+    <meta property="og:title" content="Komorebi Bridge" />
+    <meta property="og:description" content="溫馨 2D 動漫冒險者公會風格的 Mac Terminal 與 AI CLI 總管，由「瞳 (AGY)」、「光 (Codex)」、「響 (Claude Code)」三位角色坐鎮，支援本地 App 資料夾同步、HP/MP 額度監控及預設開啟遠端 App 即時看房與 Approve。" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script>
+      try {
+        var m = localStorage.getItem('komorebi-ui-theme') || 'auto';
+        var h = new Date().getHours();
+        var d = m === 'dark' || (m === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) || (m === 'auto' && (h >= 18 || h < 6));
+        if (d) {
+          document.documentElement.classList.add('dark');
+          var tc = document.querySelector('meta[name="theme-color"]');
+          if (tc) tc.setAttribute('content', '#121624');
+        }
+      } catch (e) {}
+    </script>
+  </head>
+  <body class="bg-[#FBF8F3] dark:bg-[#121624] text-[#4A3E36] dark:text-[#ECE7DF] antialiased selection:bg-amber-500/30 selection:text-amber-200 overflow-hidden">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

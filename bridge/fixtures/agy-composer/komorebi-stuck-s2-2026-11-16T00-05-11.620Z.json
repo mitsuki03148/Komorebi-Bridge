@@ -1,0 +1,12 @@
+[
+  "Example task is still running.",
+  "",
+  "────────────────────────────────────────────────────────────────────────────────",
+  "> [handoff] A sample task is ready:",
+  "  Please review the result and send the summary.",
+  "  Continue with the next step when the check is complete.",
+  "────────────────────────────────────────────────────────────────────────────────",
+  "● sample command running",
+  "────────────────────────────────────────────────────────────────────────────────",
+  "Gemini 4 Hydrogen · medium · 1 task(s) · /tasks"
+]

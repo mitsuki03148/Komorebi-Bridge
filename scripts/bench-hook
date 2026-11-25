@@ -1,0 +1,11 @@
+#!/bin/sh
+# Workbench hook (codex | claude | agy): the CLI passes its hook input on stdin; the Bridge answers with this agent's new
+# tickets in the form that CLI takes, or {} when there are none. If the Bridge is not running the answer is {}, so the
+# hook never stops the CLI. See Review/WORKBENCH/PLAN.md.
+out=$(curl -s --max-time 3 -X POST -H 'Content-Type: application/json' --data-binary @- \
+  "http://127.0.0.1:${KOMOREBI_PORT:-3000}/bench/hook/$1" 2>/dev/null)
+# Anything that is not a JSON object (an old Bridge, an error page) is ignored.
+case "$out" in
+  \{*) printf '%s\n' "$out" ;;
+  *) printf '{}\n' ;;
+esac

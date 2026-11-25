@@ -1,0 +1,59 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "commit",
+    "check",
+    "result",
+    "evidence",
+    "branch",
+    "exitCode"
+  ],
+  "properties": {
+    "commit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "check": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "\\S"
+    },
+    "result": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "SKIP",
+        "TIMEOUT",
+        "CRASH",
+        "ABORTED"
+      ]
+    },
+    "evidence": {
+      "type": "string",
+      "pattern": "^/[^\\r\\n]+$",
+      "maxLength": 500
+    },
+    "branch": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "exitCode": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 255
+    }
+  }
+}
