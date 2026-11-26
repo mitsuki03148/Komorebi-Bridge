@@ -1,7 +1,8 @@
-import { randomUUID } from 'node:crypto';
-import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import type { CLIModelId, GroupChat, TerminalRoom } from '../src/types/guild';
 import type { BenchRoutingError, RoleRouteReceipt } from '../src/types/bridge';
+import { readExperience, readExperienceInput } from './bench-experience';
 
 /**
  * Each agent's own workbench (inbox) inside a group: another member writes a ticket into it, and only its owner reads it.
@@ -26,6 +27,7 @@ export interface Ticket {
   to: BenchParty;
   title: string;
   body: string;
+  purpose?: 'persona-notice';
   repo?: string;
   ref?: string;
   boundary?: string;
@@ -72,7 +74,7 @@ export type SavedBenchChange =
   | { kind: 'completed'; ticket: Ticket; late: boolean; checked?: AcceptanceResult }
   | { kind: 'cancelled'; ticket: Ticket; by: BenchCancellation };
 
-type NewTicket = { groupId: string; from: BenchParty; to: BenchParty; title?: string; body: string; kind?: TicketKind; source?: 'verify-gate'; replyTo?: number; repo?: string; ref?: string; boundary?: string; receipt?: string; route?: RoleRouteReceipt; fixed?: Ticket['fixed']; worktree?: Ticket['worktree'] };
+type NewTicket = { groupId: string; from: BenchParty; to: BenchParty; title?: string; body: string; kind?: TicketKind; source?: 'verify-gate'; purpose?: Ticket['purpose']; replyTo?: number; repo?: string; ref?: string; boundary?: string; receipt?: string; route?: RoleRouteReceipt; fixed?: Ticket['fixed']; worktree?: Ticket['worktree'] };
 
 export function proofText(proof: ReceiptProof) {
   if (proof.state === 'missing') return `⚠ 完成時 ${proof.path} 已經唔存在，請補返 evidence`;
@@ -132,6 +134,9 @@ interface TidyState {
   pendingLesson?: true;
   firstAt?: string;
   lastDispatchAt?: string;
+  lessonCursor?: string;
+  experienceCursor?: number;
+  lastTidyTicketId?: number;
 }
 interface Saved { next: number; tickets: Ticket[]; claims: Claim[]; pings: Record<string, number[]>; worktrees?: Record<string, ClaimedCheckout>; tidy?: TidyState; agyCheckpoints?: Record<string, number> }
 
@@ -158,7 +163,8 @@ export class Bench {
 
   constructor(private readonly path?: string, private readonly now = () => Date.now(), private readonly onSavedChanges?: (changes: SavedBenchChange[]) => void, private readonly tidyGroup?: string,
     /** Groups whose finished tasks count toward the tidy and may carry a pending lesson; by default the tidy group alone. */
-    private readonly tidyMaterialGroup: (groupId: string) => boolean = groupId => groupId === tidyGroup) {
+    private readonly tidyMaterialGroup: (groupId: string) => boolean = groupId => groupId === tidyGroup,
+    private readonly lessonsLogPath?: string, private readonly experienceLogPath?: string) {
     if (!path) return;
     this.load();
     if (!this.unreadable) this.sweep();
@@ -301,7 +307,10 @@ export class Bench {
     if (!state || state.version !== 1 || state.groupId !== this.tidyGroup || !Number.isInteger(state.count) || state.count < 0 || state.count > 10 ||
         (state.pendingLesson !== undefined && state.pendingLesson !== true) ||
         ((state.firstAt !== undefined || state.count || state.pendingLesson) && !isSavedStamp(state.firstAt)) ||
-        (state.lastDispatchAt !== undefined && !isSavedStamp(state.lastDispatchAt))) return;
+        (state.lastDispatchAt !== undefined && !isSavedStamp(state.lastDispatchAt)) ||
+        (state.lessonCursor !== undefined && !/^[a-f0-9]{64}$/.test(state.lessonCursor)) ||
+        (state.experienceCursor !== undefined && (!Number.isSafeInteger(state.experienceCursor) || state.experienceCursor < 0)) ||
+        (state.lastTidyTicketId !== undefined && (!Number.isSafeInteger(state.lastTidyTicketId) || state.lastTidyTicketId < 1))) return;
     return state;
   }
 
@@ -330,19 +339,55 @@ export class Bench {
   /** Only the Bridge calls this after verifying the opted-in group's current lead. */
   dispatchTidy(groupId: string, to: BenchParty, toRoomId: string): Ticket | undefined {
     if (!this.ready() || !this.tidyEnabled(groupId)) return;
-    const state = this.data.tidy;
-    if (!state?.firstAt || (!state.count && !state.pendingLesson)) return;
+    let state = this.activeTidyState();
+    if (!state) return;
     if (this.data.tickets.some(t => t.groupId === groupId && t.kind === 'task' && t.status !== 'done' &&
         (isSystemSender(t.from) || (t.title === 'RSI 整理' && t.to.sessionId === to.sessionId)))) return;
+    // An unreadable log preserves the old eligibility rules; an empty readable log has no material.
+    let lessonCursor: string | undefined;
+    let newLessons = false;
+    let readableLessons = false;
+    if (this.lessonsLogPath) try {
+      const info = statSync(this.lessonsLogPath);
+      if (!info.isFile() || info.size > 4 * 1024 * 1024) throw new Error('Lesson log unavailable within read limit.');
+      const text = readFileSync(this.lessonsLogPath, 'utf8');
+      const rows = text.split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
+      const material = rows.filter(row => ['add', 'replace', 'pending', 'used', 'recur', 'friction'].includes(row.action));
+      lessonCursor = createHash('sha256').update(JSON.stringify(material)).digest('hex');
+      readableLessons = true;
+      newLessons = material.length > 0 && lessonCursor !== state.lessonCursor;
+    } catch { /* Log unavailable: retain the established count/time fallback. */ }
+    let experienceCursor: number | undefined;
+    let newExperience = false;
+    if (this.experienceLogPath) try {
+      const { events, invalid, conflicts } = readExperience(readExperienceInput(this.experienceLogPath));
+      if (invalid || conflicts) throw new Error('Experience log has invalid or conflicting rows.');
+      experienceCursor = events.length;
+      const start = (state.experienceCursor ?? 0) <= events.length ? state.experienceCursor ?? 0 : 0;
+      newExperience = events.slice(start).some(event => this.tidyMaterialGroup(event.groupId) &&
+        (event.event === 'capture_gap' || !(event.groupId === groupId && (event.ticketId === state!.lastTidyTicketId ||
+          this.data.tickets.some(ticket => ticket.groupId === event.groupId && ticket.id === event.ticketId && isSystemSender(ticket.from))))));
+    } catch { /* Missing capture does not override the readable lessons decision. */ }
+    const fresh = newLessons || newExperience;
+    if (readableLessons && !fresh) return;
+    if (!state.firstAt && fresh) {
+      const previous = this.data;
+      state = { ...state, firstAt: this.stamp() };
+      this.data = { ...previous, tidy: state };
+      try { this.save(); } catch (error) { this.data = previous; throw error; }
+    }
+    if (!state.firstAt || (!state.count && !state.pendingLesson && !fresh)) return;
     const since = Date.parse(state.lastDispatchAt ?? state.firstAt);
     if (state.count < 10 && (!Number.isFinite(since) || this.now() - since < 7 * 86_400_000)) return;
     const previous = this.data;
     const at = this.stamp();
     const ticket: Ticket = { id: previous.next, kind: 'task', groupId, from: { system: 'rsi-tidy' }, to,
-      title: 'RSI 整理', body: '核對原單及證據，整理待審 lessons。三件獨立工作有相同原因，才提出一般規則；有可行提案才問 Founder。試行及正式採用由 Founder 決定。不要自動更改 lesson 或 skills，也不要發送待審全文或受控檔案。',
+      title: 'RSI 整理', body: '先跑 lesson report（包括 friction 分組），核對原單及證據，比較所有角色的 lesson（不止 pending）。跨角色同一成因有至少三張獨立工單，才提案升入對應 SKILL.md 或共用 skill；recur 至少兩次，提案改寫、升入 SKILL 或加工具／測試檢查；60 日沒有 used 或 recur，提案刪除。再跑 node --import tsx scripts/bench-experience.ts summary <group> <from-UTC> <until-UTC>（summarizeExperience）看今期返工、過期、取消、卡住等事件；未捕捉的回合上限等訊號須另查原單，不當成零。同一 Bridge 問題涉及至少三張獨立工單或單一嚴重 bug，提出改善提案：問題、證據工單、建議修法、影響範圍。相近文字只是候選，須核對原因。所有改動只作提案，有可行提案才用問題卡問 Founder；批准後才派 @implement 或 @debug，循正常 review／merge。整理房不要自改 Bridge code、lesson 或 skills，也不要發送待審全文或受控檔案。',
       hops: 1, status: 'new', createdAt: at, fixed: { fromRoomId: '', toRoomId } };
     this.data = { ...previous, next: previous.next + 1, tickets: [...previous.tickets, ticket],
-      tidy: { version: 1, groupId, count: 0, lastDispatchAt: at } };
+      tidy: { version: 1, groupId, count: 0, lastDispatchAt: at, lastTidyTicketId: ticket.id,
+        ...((lessonCursor ?? state.lessonCursor) ? { lessonCursor: lessonCursor ?? state.lessonCursor } : {}),
+        ...((experienceCursor ?? state.experienceCursor) !== undefined ? { experienceCursor: experienceCursor ?? state.experienceCursor } : {}) } };
     try { this.save([{ kind: 'opened', ticket }]); } catch (error) { this.data = previous; throw error; }
     return ticket;
   }
@@ -416,7 +461,7 @@ export class Bench {
     const ticket: Ticket = {
       id: this.data.next, kind, groupId: input.groupId, from: input.from, to: input.to,
       title: clean(input.title, benchLimits.title) || firstLine.slice(0, benchLimits.title),
-      body, hops, status: 'new', createdAt: this.stamp(),
+      body, hops, status: 'new', createdAt: this.stamp(), ...(input.purpose ? { purpose: input.purpose } : {}),
       ...(parent ? { replyTo: parent.id } : {}),
       ...(input.route ? { route: input.route } : {}),
       ...(input.fixed ? { fixed: input.fixed } : {}),
@@ -785,7 +830,7 @@ export function ticketText(ticket: Ticket, tool: string) {
       lines.push(`開工核對可用 ${tool} task-context，按工單加 --repo "<工作樹>" 同 --ref "<版本>"。可順便預覽已知嘅短片段，要全文就用原生讀檔。指定必讀資料照讀。`);
     }
     lines.push(isSystemSender(ticket.from) ? '本工單由 Bridge 發出；核對證據和整理待審資料，試行及正式採用須由 Founder 決定。' : benchAuthority,
-      '做完唔好自行清理 raw log、receipt、build、scratch：留低，整個大任務完晒由總指揮統一代清。',
+      '做完唔好自行清理 raw log、receipt、build、scratch：留低，整個大任務完晒由總指揮 ♛ 統一代清。',
       `完成：${tool} bench done ${ticket.id} --from ${me} --note "<結果>" [--receipt <commit 或本機路徑>]`,
       ...(!isSystemSender(ticket.from) ? [`問對方：${tool} bench send ${ticket.from.sessionId} --from ${me} --reply-to ${ticket.id} "<訊息>"`] : []));
   }

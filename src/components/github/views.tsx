@@ -1,7 +1,7 @@
 import { useT } from '../../i18n/useLang';
 import { t as translateCurrent } from '../../i18n';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, ChevronLeft, Copy, ExternalLink, File as FileIcon, Folder, Lock, MessageSquare, Send } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Copy, ExternalLink, File as FileIcon, Folder, Lock, MessageSquare, Send } from 'lucide-react';
 import { Markdown } from '../Markdown';
 import { copyText } from '../../utils/roomUi';
 import { blobLink, commitLink, compareLink, issueLink, lineSelection, parsePatch, type LineRange } from '../../utils/githubLinks';
@@ -156,20 +156,21 @@ export function CompareDetail({ owner, repo, base, head, aheadBy, behindBy, file
   </div>;
 }
 
-export function DirRows({ entries, onOpen }: { entries: GhEntry[]; onOpen: (entry: GhEntry) => void }) {
+export function DirRows({ entries, onOpen, loading = false }: { entries: GhEntry[]; onOpen: (entry: GhEntry) => void; loading?: boolean }) {
   const { t } = useT();
   if (!entries.length) return <p className="px-2 py-8 text-center text-sm text-[#7D6D61] dark:text-[#A4AECC]">{t('github.directory.empty')}</p>;
-  return <ul className="space-y-1.5">{entries.map(entry => {
+  return <ul className={`space-y-1.5 transition-opacity duration-150 ${loading ? 'opacity-60' : ''}`}>{entries.map(entry => {
     const isMd = /\.(?:md|markdown)$/i.test(entry.name);
     const icon = entry.type === 'dir'
       ? <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-[#EBF4EC] dark:bg-[#20332C] text-[#5A8D66] dark:text-[#96C7A3]"><Folder className="h-3.5 w-3.5" aria-hidden="true" /></span>
       : isMd
         ? <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-[#FCEEF2] dark:bg-[#312338] text-[#C4668A] dark:text-[#EFA4B2]"><FileIcon className="h-3.5 w-3.5" aria-hidden="true" /></span>
         : <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-[#F4EDE4] dark:bg-[#252D48] text-[#8C7A6E] dark:text-[#A4AECC]"><FileIcon className="h-3.5 w-3.5" aria-hidden="true" /></span>;
-    return <li key={entry.path}><button type="button" data-entry={entry.type} onClick={() => onOpen(entry)} className="flex w-full items-center gap-2.5 rounded-2xl border border-[#EDE3D5]/90 dark:border-[#2E3654] bg-white/75 dark:bg-[#1E253D]/90 px-2.5 py-2 text-left text-sm shadow-[0_1px_2px_rgba(90,70,50,0.03)] transition hover:bg-white dark:hover:bg-[#242C48]">
+    return <li key={entry.path}><button type="button" data-entry={entry.type} onClick={() => onOpen(entry)} className="group flex w-full items-center gap-2.5 rounded-2xl border border-[#EDE3D5]/90 dark:border-[#2E3654] bg-white/75 dark:bg-[#1E253D]/90 px-2.5 py-2 text-left text-sm shadow-[0_1px_2px_rgba(90,70,50,0.03)] transition-all duration-150 hover:bg-white dark:hover:bg-[#242C48] active:scale-[0.985] active:bg-[#FCF0F4]/80 dark:active:bg-[#2A2136]">
       {icon}
       <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-[#4A3E36] dark:text-[#ECE7DF]">{entry.name}</span>
       {entry.type === 'file' && <span className="shrink-0 text-[10px] text-[#B3A396] dark:text-[#7E89A8]">{entry.size > 1024 ? `${Math.round(entry.size / 1024)} KB` : `${entry.size} B`}</span>}
+      {entry.type === 'dir' && <ChevronRight className="h-4 w-4 shrink-0 text-[#C2B3A6] transition-transform duration-150 group-hover:translate-x-0.5 dark:text-[#667296]" aria-hidden="true" />}
     </button></li>;
   })}</ul>;
 }

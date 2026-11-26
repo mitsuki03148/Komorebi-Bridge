@@ -252,10 +252,10 @@ test('@orchestrator reaches the sender\'s group\'s current lead, and a room that
     assert.match(viaOld.lines[0], /已由「R5 統籌」接手/)
     // Without --from there is no group to look in, and the lead itself has nobody to report to.
     assert.match((await sendHandoff({ url: fake.url, query: '@orchestrator', text: 'x' })).lines.join(' '), /--from/)
-    assert.match((await sendHandoff({ url: fake.url, query: '@orchestrator', text: 'x', from: 'new' })).lines.join(' '), /你自己就係現任總指揮/)
+    assert.match((await sendHandoff({ url: fake.url, query: '@orchestrator', text: 'x', from: 'new' })).lines.join(' '), /你自己就係現任總指揮 ♛/)
   } finally { await fake.close() }
   const none = await fakeBridge([worker, newLead], modes({ w: true, new: true }), { groups: [team(undefined, 'w', 'new')] })
-  try { assert.match((await sendHandoff({ url: none.url, query: '@orchestrator', text: 'x', from: 'Worker' })).lines.join(' '), /未有現任總指揮/) } finally { await none.close() }
+  try { assert.match((await sendHandoff({ url: none.url, query: '@orchestrator', text: 'x', from: 'Worker' })).lines.join(' '), /未有現任總指揮 ♛/) } finally { await none.close() }
 })
 
 test('a message that does not arrive says so, and points at the current lead of the room\'s group', async () => {
@@ -269,7 +269,7 @@ test('a message that does not arrive says so, and points at the current lead of 
     assert.equal(failed.code, 1)
     const text = failed.lines.join('\n')
     assert.match(text, /未送達：訊息冇入對方房/)
-    assert.match(text, /現任總指揮係「新統籌」/)
+    assert.match(text, /現任總指揮 ♛ 係「新統籌」/)
     assert.match(text, /send @orchestrator --from Worker/)
   } finally { await fake.close() }
 })

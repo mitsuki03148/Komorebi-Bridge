@@ -367,11 +367,11 @@ setInterval(() => void pushNotifier.tick(rooms.snapshot()).then(called => {
     broadcast({ type: 'ATTENTION', roomId: room.id, message: `${rooms.characters[room.modelId].characterName} · ${room.roomName} ${reason ? blockerText[reason] : '畫面長時間沒有變化，可能需要你處理'}` });
   }
 }).catch(() => {}), 10_000).unref();
-// The crown has the group clock; every other room uses the usual unviewed grace.
+// The crown has the group clock; every other room closes after 2 minutes unviewed.
 const presence = new RoomPresence<WebSocket>(roomId => {
   if (groupCloser?.isCrown(roomId)) { scheduleRecovery(); return true; }
   return rooms.closeUnviewed(roomId);
-}, 30_000);
+}, 120_000);
 presence.onViewChange = scheduleRecovery;
 const roomViews = new Map<WebSocket, string>();
 const groupViews = new GroupViews<WebSocket>({
@@ -694,7 +694,7 @@ function deliverCrownNotice(roomId: string) {
   if (!groupId || !group || group.orchestratorRoomId !== roomId || !room?.live) { crownNotices.delete(roomId); return; }
   if (!room.ready || room.status !== 'idle' || room.pendingApproval || room.pendingQuestion || room.menu) return;
   crownNotices.delete(roomId);
-  const text = `[交接｜來自 Bridge] 你而家係「${group.name}」嘅隊長。名單同派單方法已附在下面；Founder 冇指示就唔使回覆，之後有需要先派單。`;
+  const text = `[交接｜來自 Bridge] 你而家係「${group.name}」嘅總指揮 ♛（隊長）。一般或冇寫等級嘅任務讀 lead-standard，都可以派單。名單同派單方法已附在下面；Founder 冇指示就唔使回覆，之後有需要先派單。`;
   void rooms.handle({ type: 'INPUT', roomId, text }, () => {}, { reserveRoster: () => groups.reserveRoster(groupId, roomId) }).catch(() => {});
 }
 
@@ -708,7 +708,7 @@ function notifyPersonas() {
       inboxRoot: join(workspace, 'Inbox'), since: personaSince, groups: () => groups.snapshot(), room: roomId => rooms.rooms.get(roomId), handled: handledReports,
       beforeNotice: () => { if (features.inbox) void refreshInboxAlerts(); },
       send: (group, lead, ticket) => {
-        const result = sendFromBridge(benchDeps, { requestId: 'persona-notice', action: 'send', from: lead.sessionId ?? lead.id, to: '@clerk', groupId: group.id, title: ticket.title, body: ticket.body });
+        const result = sendFromBridge(benchDeps, { requestId: 'persona-notice', action: 'send', from: lead.sessionId ?? lead.id, to: '@clerk', groupId: group.id, title: ticket.title, body: ticket.body }, true);
         return result.ok ? { sent: true, roomId: result.wake?.roomId } : { sent: false, why: result.lines.join(' ') || '派單失敗' };
       },
       tell: (lead, text) => { rooms.note(lead.id, text); benchDeps.notice(text); },
@@ -751,6 +751,7 @@ rooms.onIdle = idle => {
   scheduleRecovery();
   if (crownNotices.has(idle.id)) setTimeout(() => deliverCrownNotice(idle.id), 2_000).unref();
   notifyPersonas();
+  setTimeout(notifyPersonas, reportWaitMs).unref();
   // The report reaches the conversation record a moment after the prompt comes back.
   if (groupCloser?.isCrown(idle.id)) setTimeout(cancelOnFinalReport, reportWaitMs).unref();
   for (const group of groups.snapshot()) if (group.orchestratorRoomId === idle.id) scheduleFileNotice(group.id);
@@ -1537,7 +1538,7 @@ http.listen(port, config.host, () => {
   ) : undefined;
   benchDeps.bench = new Bench(join(workspace, '.komorebi-bench.json'), undefined,
     benchExperience && (changes => benchExperience.record(changes)), tidyGroup,
-    experienceScope && (groupId => inExperienceScope(experienceScope, groupId)));
+    experienceScope && (groupId => inExperienceScope(experienceScope, groupId)), join(config.skills, '_lessons', 'log.jsonl'), join(workspace, experienceFile));
   benchDeps.bench.onRecoveryChange = benchRecoveryChanged;
   scheduleTidy();
   // Only after the port is successfully bound may recovery touch the signed configuration or Keychain anchor.

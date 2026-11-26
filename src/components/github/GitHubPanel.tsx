@@ -2,8 +2,8 @@ import { useT } from '../../i18n/useLang';
 import { t as translateCurrent } from '../../i18n';
 import { PullIndicator } from '../PullIndicator';
 import { usePullToRefresh } from '../../utils/pullRefresh';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronRight, CircleDot, Code2, GitBranch, GitCommitHorizontal, Github, Loader2, RefreshCw, Search, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, CircleDot, Code2, GitBranch, GitCommitHorizontal, Github, Loader2, RefreshCw, Search, X } from 'lucide-react';
 import { focusScope } from '../../utils/focusScope';
 import { useEscape } from '../../utils/roomUi';
 import { SearchPicker, type PickItem } from './SearchPicker';
@@ -106,6 +106,12 @@ function CodeTab({ call, repo, branch, initialPath = '', initialLines }: { call:
   const node = useLoad(() => call<{ kind: 'dir'; entries: GhEntry[] } | (GhFileContent & { kind: 'file' }) | { kind: 'other' }>('tree', { repo, ref: branch.name, path }), [repo, branch.name, path]);
   const open = (entry: { path: string; type?: string }) => { setPath(entry.path); setLines(undefined); setFound(undefined); };
   const crumbs = path ? path.split('/') : [];
+  const parentPath = crumbs.length > 0 ? crumbs.slice(0, -1).join('/') : null;
+  const crumbsRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = crumbsRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [path]);
   const search = async (event: React.FormEvent) => {
     event.preventDefault(); setSearchError(undefined);
     if (!query.trim()) { setFound(undefined); return; }
@@ -116,18 +122,25 @@ function CodeTab({ call, repo, branch, initialPath = '', initialLines }: { call:
       <input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('github.code.search.placeholder', { owner, repo: name })} aria-label={t('github.code.search.aria')} className="min-h-9 min-w-0 flex-1 bg-transparent text-base text-[#4A3E36] dark:text-[#ECE7DF] placeholder:text-[#9A887C] dark:placeholder:text-[#7E89A8] outline-none sm:text-xs" /></form>
     {searchError && <p role="alert" className="mb-2 text-xs text-[#A94D5A] dark:text-[#F09AA6]">{searchError}</p>}
     {found ? <div><Back onBack={() => setFound(undefined)}>{t('github.code.back')}</Back><DirRows entries={found.map(item => ({ name: item.path, path: item.path, type: 'file', size: 0 }))} onOpen={open} /></div> : <>
-      <nav aria-label={t('github.code.path')} className="mb-2 flex items-center gap-0.5 overflow-x-auto whitespace-nowrap py-0.5 font-mono text-xs text-[#7D6D61] dark:text-[#A4AECC]">
-        <button type="button" onClick={() => open({ path: '' })} className="shrink-0 rounded-full px-2 py-0.5 font-semibold hover:bg-white/80 dark:hover:bg-[#27304D]">{name}</button>
-        {crumbs.map((part, index) => {
-          const last = index === crumbs.length - 1;
-          return <span key={index} className="inline-flex shrink-0 items-center gap-0.5">
-            <ChevronRight className="h-3 w-3 text-[#B8A89B] dark:text-[#697496]" aria-hidden="true" />
-            <button type="button" onClick={() => open({ path: crumbs.slice(0, index + 1).join('/') })} className={`rounded-full px-2 py-0.5 transition hover:bg-white/80 dark:hover:bg-[#27304D] ${last ? 'font-semibold text-[#4A3E36] dark:text-[#ECE7DF]' : ''}`}>{part}</button>
-          </span>;
-        })}
-      </nav>
+      <div className="mb-2 flex items-center gap-1.5">
+        <button type="button" disabled={parentPath === null} onClick={() => parentPath !== null && open({ path: parentPath })} aria-label={t('github.code.back')} title={t('github.code.back')}
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#E6D9CB] bg-white/90 text-[#6E5D52] shadow-[0_1px_2px_rgba(90,70,50,0.03)] transition-all duration-150 hover:border-[#D9A7B8] hover:bg-[#FCF0F4] hover:text-[#7A3851] active:scale-95 disabled:opacity-35 dark:border-[#364062] dark:bg-[#232B45] dark:text-[#C5CDE3] dark:hover:border-[#624764] dark:hover:bg-[#2A2136] dark:hover:text-[#F4C4D4]">
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <nav ref={crumbsRef} aria-label={t('github.code.path')} className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto whitespace-nowrap py-0.5 font-mono text-xs text-[#7D6D61] dark:text-[#A4AECC]">
+          <button type="button" onClick={() => open({ path: '' })} className={`shrink-0 rounded-full px-2 py-1 transition-all duration-150 hover:bg-white/80 active:scale-95 dark:hover:bg-[#27304D] ${crumbs.length === 0 ? 'font-semibold text-[#4A3E36] dark:text-[#ECE7DF]' : 'font-semibold'}`}>{name}</button>
+          {crumbs.map((part, index) => {
+            const last = index === crumbs.length - 1;
+            return <span key={index} className="inline-flex shrink-0 items-center gap-0.5">
+              <ChevronRight className="h-3 w-3 text-[#B8A89B] dark:text-[#697496]" aria-hidden="true" />
+              <button type="button" onClick={() => open({ path: crumbs.slice(0, index + 1).join('/') })} className={`rounded-full px-2 py-1 transition-all duration-150 hover:bg-white/80 active:scale-95 dark:hover:bg-[#27304D] ${last ? 'font-semibold text-[#4A3E36] dark:text-[#ECE7DF]' : ''}`}>{part}</button>
+            </span>;
+          })}
+        </nav>
+        {node.loading && Boolean(node.data) && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#A24D6D] dark:text-[#EFA4B2]" aria-hidden="true" />}
+      </div>
       <Status loading={node.loading && !node.data} error={node.error} onRetry={node.reload} />
-      {node.data?.kind === 'dir' && <DirRows entries={node.data.entries} onOpen={open} />}
+      {node.data?.kind === 'dir' && <DirRows entries={node.data.entries} onOpen={open} loading={node.loading} />}
       {node.data?.kind === 'file' && <FileDetail owner={owner} repo={name} sha={branch.sha} file={node.data} lines={lines} onLines={setLines} />}
       {node.data?.kind === 'other' && <p className="text-sm text-[#7D6D61] dark:text-[#A4AECC]">{t('github.code.unavailable')}</p>}
     </>}

@@ -50,9 +50,10 @@ test('the group header shows who it is talking to as a chip in that role\'s colo
 
 test('the top bar, role cards, room tabs and the group sidebar let the picture through, and active cards take their role colour', async () => {
   const source = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
-  assert.match(source, /<header className="relative z-40[^"]*border-\[#E6DCD0\]\/60 bg-white\/45/)
-  assert.match(source, /px-3 py-2 bg-white\/35 border-b border-\[#E6DCD0\]\/50 grid grid-cols-3/)
-  assert.match(source, /px-2\.5 py-1\.5 bg-white\/35 border-b border-\[#E6DCD0\]\/50 flex items-center/)
+  // Spec change (瞳's A1+B2 frosted canopy & bottom dock redesign): seamless frosted top canopy on phone, soft gradient header on Mac.
+  assert.match(source, /<header className="relative z-40[^"]*bg-\[#FBF8F3\]\/74/)
+  assert.match(source, /px-3 pt-1\.5 pb-1\.5 grid grid-cols-3/)
+  assert.match(source, /px-3 py-1 flex items-center gap-1\.5 shrink-0/)
   assert.match(source, /\[&_aside\]:bg-white\/35/)
   assert.ok(source.includes('[&_.guild-selection[aria-pressed=true]]:bg-[color-mix(in_srgb,var(--selection-surface)_70%,transparent)]'), 'the active role card keeps its own colour, softened')
   assert.ok(source.includes('[&_.guild-selection[aria-current=true]]:bg-[color-mix(in_srgb,var(--selection-surface)_70%,transparent)]'), 'and so does the active room tab')

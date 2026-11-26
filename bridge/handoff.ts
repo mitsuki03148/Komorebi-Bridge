@@ -209,10 +209,10 @@ export function resolveTarget(rooms: Map<string, TerminalRoom>, groups: GroupCha
       const lead = rooms.get(group.orchestratorRoomId);
       if (lead) leads.set(lead.id, lead);
     }
-    if (!leads.size) return { error: '你所屬群組未有現任總指揮。請 Founder 喺群組選單揀一個，或者用房名／Session ID 直接指明。' };
-    if (leads.size > 1) return { error: `你喺幾個群組都有總指揮，唔知邊個：\n${[...leads.values()].map(lead => `  ${lead.roomName} · ${roomKey(lead)}`).join('\n')}\n請用 Session ID 指明。` };
+    if (!leads.size) return { error: '你所屬群組未有現任總指揮 ♛。請 Founder 喺群組選單揀一個，或者用房名／Session ID 直接指明。' };
+    if (leads.size > 1) return { error: `你喺幾個群組都有總指揮 ♛，唔知邊個：\n${[...leads.values()].map(lead => `  ${lead.roomName} · ${roomKey(lead)}`).join('\n')}\n請用 Session ID 指明。` };
     found = { room: [...leads.values()][0] };
-    if (found.room.id === sender.room.id) return { error: '你自己就係現任總指揮，冇人可以交。' };
+    if (found.room.id === sender.room.id) return { error: '你自己就係現任總指揮 ♛，冇人可以交。' };
   } else found = findRoom(all, query);
   if ('error' in found) return found;
   const notes: string[] = [];
@@ -230,7 +230,7 @@ function routeHint(link: Link, room: TerminalRoom, from?: string): string[] {
   const lines = ['未送達：訊息冇入對方房，唔好當已送。'];
   const lead = link.groups.filter(group => group.members.some(member => member.roomId === room.id) && group.orchestratorRoomId && group.orchestratorRoomId !== room.id)
     .map(group => link.rooms.get(group.orchestratorRoomId!)).find((item): item is TerminalRoom => Boolean(item));
-  if (lead) lines.push(`「${room.roomName}」所屬群組嘅現任總指揮係「${lead.roomName}」（${roomKey(lead)}）。對方如果已換房，改用：komorebi-room send @orchestrator --from ${from ?? '<你>'} "<訊息>"。`);
+  if (lead) lines.push(`「${room.roomName}」所屬群組嘅現任總指揮 ♛ 係「${lead.roomName}」（${roomKey(lead)}）。對方如果已換房，改用：komorebi-room send @orchestrator --from ${from ?? '<你>'} "<訊息>"。`);
   lines.push('用 komorebi-room list 核對對方而家係邊間房。');
   return lines;
 }

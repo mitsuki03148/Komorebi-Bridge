@@ -259,3 +259,12 @@ test('desktop and phone share the explicit member handler; the view synchronizat
   assert.match(sidebar, /type="button" data-room-id=\{member.roomId\}/);
   assert.match(sidebar, /onClick=.*onSelectRoom\(member.roomId\)/, 'native button supports pointer activation and Enter/Space');
 });
+
+test('crown notice identifies the lead and keeps the no-reply instruction', async () => {
+  const server = await readFile(new URL('../server.ts', import.meta.url), 'utf8');
+  const notice = server.match(/const text = `\[交接｜來自 Bridge\][^`]+`;/)?.[0];
+  assert.ok(notice);
+  assert.match(notice, /總指揮 ♛（隊長）/);
+  assert.match(notice, /一般或冇寫等級嘅任務讀 lead-standard，都可以派單/);
+  assert.match(notice, /Founder 冇指示就唔使回覆/);
+});

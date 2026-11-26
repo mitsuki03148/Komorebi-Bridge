@@ -104,7 +104,7 @@ export function DrivePanel({ call, onClose, desktop }: { call: GhCall; onClose: 
         {accountItems.length > 1 && <SearchPicker value={account ?? ''} placeholder={t('drive.account.search')} emptyLabel={t('drive.account.empty')} items={accountItems} onPick={pickAccount} title={t('drive.account.choose')} />}
         {moving && <p data-moving className="rounded-2xl border border-[#F0D9B5] dark:border-[#785B38] bg-[#FFF6E8] dark:bg-[#2B2219] px-3 py-2 text-xs text-[#8A5A1F] dark:text-[#F0C882]">{t('drive.move.instructions', { name: moving.name })}</p>}
         {view.kind === 'list' && <>
-          <Crumbs path={folder} onOpen={go} />
+          <Crumbs path={folder} onOpen={go} loading={listing.loading && Boolean(listing.data)} />
           <label className="flex items-center gap-1.5 rounded-full border border-[#E5D7C6] dark:border-[#364062] bg-white/90 dark:bg-[#141A2C] px-3 shadow-[inset_0_1px_2px_rgba(90,70,50,0.03)]"><Search className="h-3.5 w-3.5 text-[#9A887C] dark:text-[#8E98B8]" aria-hidden="true" />
             <input value={filter} onChange={event => setFilter(event.target.value)} placeholder={t('drive.filter')} aria-label={t('drive.filter')} spellCheck={false} className="min-h-9 min-w-0 flex-1 bg-transparent text-base text-[#4A3E36] dark:text-[#ECE7DF] placeholder:text-[#9A887C] dark:placeholder:text-[#7E89A8] outline-none sm:text-xs" /></label>
         </>}
@@ -115,13 +115,13 @@ export function DrivePanel({ call, onClose, desktop }: { call: GhCall; onClose: 
           : accounts.data && !accounts.data.accounts.length ? <p className="px-2 py-6 text-center text-sm text-[#7D6D61]">{t('drive.account.missing')}</p>
           : view.kind === 'list' ? <>
             <Status loading={listing.loading && !listing.data} error={listing.error} onRetry={listing.reload} />
-            {!listing.error && listing.data && <DriveRows entries={entries} onOpen={open} onMenu={moving ? undefined : setMenu} />}
+            {!listing.error && listing.data && <DriveRows entries={entries} onOpen={open} onMenu={moving ? undefined : setMenu} loading={listing.loading} />}
           </>
           : view.kind === 'card' ? <FileCard entry={view.entry} onBack={() => setView({ kind: 'list' })} onCopyLink={() => act.link(view.entry, view.path)} onOpenLink={() => act.openLink(view.entry, view.path)} />
           : <TextPane call={call} account={account!} entry={view.entry} folder={view.path} desktop={desktop} onBack={() => setView({ kind: 'list' })} onCopyLink={() => act.link(view.entry, view.path)} onReveal={() => void act.reveal(view.entry, view.path)} />}
       </div>
-      {moving && view.kind === 'list' && <footer className="flex shrink-0 gap-2 border-t border-[#E5DAC9] bg-[#F5EFE6] px-3 py-2">
-        <button type="button" onClick={() => void move()} className="min-h-9 flex-1 rounded-full bg-[#7A9580] px-4 text-xs font-bold text-white">{t('drive.move.here')}</button>
+      {moving && view.kind === 'list' && <footer className="flex shrink-0 gap-2 border-t border-[#E5DAC9] dark:border-[#2C3450] bg-[#F5EFE6] dark:bg-[#1C233A] px-3 py-2">
+        <button type="button" onClick={() => void move()} className="min-h-9 flex-1 rounded-full bg-[#7A9580] px-4 text-xs font-bold text-white transition active:scale-[0.985]">{t('drive.move.here')}</button>
         <button type="button" onClick={() => setMoving(undefined)} className={drivePill}>{t('drive.cancel')}</button></footer>}
       {notice && <p role="status" data-drive-notice className="pointer-events-none absolute inset-x-6 bottom-16 z-40 rounded-full bg-[#4A3E36]/90 px-4 py-2 text-center text-xs text-white">{notice}</p>}
       {menu && <MenuSheet entry={menu} desktop={desktop} onClose={() => setMenu(undefined)}

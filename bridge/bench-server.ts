@@ -430,7 +430,7 @@ function isLastLeadTask(deps: BenchDeps, ticket: Ticket | undefined) {
 }
 
 /** One workbench request from `komorebi-room bench …`. */
-export function benchAction(deps: BenchDeps, event: BenchRequest, checkout?: { roomId: string; repoPath: string; path: string }, checked?: AcceptanceResult): Result {
+export function benchAction(deps: BenchDeps, event: BenchRequest, checkout?: { roomId: string; repoPath: string; path: string }, checked?: AcceptanceResult, personaNotice = false): Result {
   const result = (lines: string[], extra: Partial<Result> = {}): Result => ({ type: 'BENCH_RESULT', requestId: event.requestId, ok: true, lines, ...extra });
   try {
     const me = party(deps, event.from, '你自己的房（--from）');
@@ -525,6 +525,7 @@ export function benchAction(deps: BenchDeps, event: BenchRequest, checkout?: { r
           title: text(event.title)?.trim() || (direction ? body.replace(/\r\n?/g, '\n').trim().split('\n')[0] : undefined),
           route: picked?.route, fixed,
           body: combined,
+          ...(personaNotice ? { purpose: 'persona-notice' as const } : {}),
           ...(event.notify === true ? { kind: 'notice' as const } : {}),
           ...(selfGate ? { source: 'verify-gate' as const } : {}),
           replyTo: event.replyTo === undefined ? undefined : Number(event.replyTo),
@@ -659,12 +660,13 @@ export function cancelLeadTickets(deps: BenchDeps, groupId: string, lead: Termin
   const keys = keysOf(lead);
   const cancelled: number[] = [];
   for (const ticket of openLeadTickets(deps, groupId, lead)) {
+    if (ticket.purpose === 'persona-notice') continue;
     try {
-      if (!deps.bench.cancel(ticket.id, keys, '隊長已交最後報告（RESULT — DONE）', 'lead_final_report')) continue;
+      if (!deps.bench.cancel(ticket.id, keys, '隊長 ♛ 已交最後報告（RESULT — DONE）', 'lead_final_report')) continue;
     } catch { continue; }
     cancelled.push(ticket.id);
     const recipient = roomOf(deps, ticket.to.sessionId);
-    if (recipient) deps.note(recipient.id, `工作台 #${ticket.id} 已由 Bridge 取消：隊長已交最後報告。`);
+    if (recipient) deps.note(recipient.id, `工作台 #${ticket.id} 已由 Bridge 取消：隊長 ♛ 已交最後報告。`);
   }
   if (cancelled.length) deps.note(lead.id, `Bridge 已取消你派出但未完成的工單：${cancelled.map(id => `#${id}`).join('、')}（最後報告為 DONE）。`);
   return cancelled;
@@ -906,8 +908,8 @@ export function startClosedRecipient(deps: BenchDeps, room: TerminalRoom): boole
  * The Bridge itself sends this ticket, so no CLI runs the fixed wake that `deliver` reserved for it. Release that reservation,
  * or the Bridge's own wake-up skips the ticket as already pending and the recipient waits for the unread retry.
  */
-export function sendFromBridge(deps: BenchDeps, event: BenchRequest): Result {
-  const result = benchAction(deps, event);
+export function sendFromBridge(deps: BenchDeps, event: BenchRequest, personaNotice = false): Result {
+  const result = benchAction(deps, event, undefined, undefined, personaNotice);
   if (result.ok && result.wake) deps.bench.finishPing(result.wake.wakeId, false);
   return result;
 }
@@ -1029,7 +1031,7 @@ export function escalateUnread(deps: BenchDeps): number[] {
       if (!lead || recipient?.id === lead.id) continue;
       deps.bench.markEscalated(ticket.id);
       const state = !recipient ? '房已不在' : recipient.live ? 'CLI 已開但未讀' : 'CLI 未開';
-      const line = `工單 #${ticket.id}「${ticket.title.slice(0, 60)}」：${partyName(ticket.to)} ${Math.round(idleMs / 60_000)} 分鐘仍未讀（${state}）。Bridge 已提示${ticket.nudges ? ` ${ticket.nudges} 次` : ''}；請隊長跟進，或請 Founder 開房。`;
+      const line = `工單 #${ticket.id}「${ticket.title.slice(0, 60)}」：${partyName(ticket.to)} ${Math.round(idleMs / 60_000)} 分鐘仍未讀（${state}）。Bridge 已提示${ticket.nudges ? ` ${ticket.nudges} 次` : ''}；請隊長 ♛ 跟進，或請 Founder 開房。`;
       deps.note(lead.id, line);
       try {
         deps.bench.send({ groupId: group.id, from: ticket.to, to: partyOf(lead), kind: 'notice', title: `工單 #${ticket.id} 未被讀取`, body: line });

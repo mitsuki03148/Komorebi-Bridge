@@ -12,7 +12,7 @@ import type { GroupChat, TerminalRoom } from '../src/types/guild';
 import { normalizeRoleDirection } from '../src/types/groupRoles';
 import { Bench, benchAuthority, benchLimits, ticketText } from './bench';
 import { Rooms } from './rooms';
-import { benchAction, benchHook, dispatchRsiTidy, idleWake, legacyBenchInputGuard, runFixedBenchWake, sendFromBridge, type BenchDeps } from './bench-server';
+import { benchAction, benchHook, cancelLeadTickets, dispatchRsiTidy, idleWake, legacyBenchInputGuard, runFixedBenchWake, sendFromBridge, type BenchDeps } from './bench-server';
 
 type Wake = Extract<ClientEvent, { type: 'BENCH_WAKE' }>;
 type Handle = Parameters<typeof runFixedBenchWake>[3];
@@ -45,6 +45,20 @@ function fixture(bench = new Bench()) {
   const route = (fields: Record<string, unknown> = {}) => act('send', author, { to: '@review', body: 'Review the fixture', ...fields });
   return { deps, author, reviewer, helper, group, rooms, groups, successors, allowlist, act, route, notifications };
 }
+
+test('only Bridge persona dispatch creates a ticket protected from lead final-report cancellation', () => {
+  const f = fixture();
+  f.group.members[1] = member(f.reviewer, 'clerk');
+  const event = { requestId: 'persona', action: 'send', from: f.author.sessionId!, to: '@clerk', groupId: f.group.id, title: '通知', body: 'fixture' };
+  const ordinary = benchAction(f.deps, { ...event, purpose: 'persona-notice' });
+  assert.equal(ordinary.ok, true);
+  const postal = sendFromBridge(f.deps, event, true);
+  assert.equal(postal.ok, true);
+  assert.equal(f.deps.bench.get(1)?.purpose, undefined);
+  assert.equal(f.deps.bench.get(2)?.purpose, 'persona-notice');
+  assert.deepEqual(cancelLeadTickets(f.deps, f.group.id, f.author), [1]);
+  assert.equal(f.deps.bench.get(2)?.status, 'new');
+});
 function event(wake: FixedBenchWake, phase: Wake['phase'] = 'input'): Wake {
   return { type: 'BENCH_WAKE', requestId: 'fixture-write', phase, ...wake };
 }

@@ -194,7 +194,8 @@ test('three-member roster uses actual role keys, one scoped command and readable
   assert.ok(suffix.includes('@implement 光 · Implementation（' + sessionId(1) + '）'));
   assert.ok(suffix.includes('@qa lead 響 · Verification（' + sessionId(2) + '）'));
   assert.ok(suffix.includes('@native-test 瞳 · Native Test（' + sessionId(3) + '）'));
-  assert.ok(suffix.includes('總指揮：Implementation（' + sessionId(1) + '）'));
+  assert.ok(suffix.includes('總指揮 ♛：Implementation（' + sessionId(1) + '）'));
+  assert.ok(!suffix.includes('你就係總指揮 ♛'), 'members must not be told they are the lead');
   assert.ok(suffix.includes("bench send '@<崗位>' --group " + groupId + ' --from'));
   assert.ok(suffix.includes('告示版：/Volumes/Komorebi/Bench/Rules.md。開工前讀一次。'));
   assert.equal(suffix.split('\n').length, 1);

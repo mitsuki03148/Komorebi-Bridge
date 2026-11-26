@@ -112,11 +112,16 @@ export function sendPersonaNotices(deps: PersonaNoticeDeps) {
     if (!Number.isFinite(at) || at < deps.since) continue;
     const report = personaReport(entry.text, deps.inboxRoot);
     if (!report) continue;
+    const identity = report.folder ? `persona:${JSON.stringify([report.persona, report.folder, report.status])}` : undefined;
+    if (identity && deps.handled.has(identity)) { deps.handled.add(entry.id); continue; }
     try { deps.beforeNotice?.(report); } catch { /* A scan must never block the notice. */ }
     deps.handled.add(entry.id);
     const ticket = personaTicket(report, deps.inboxRoot);
     const result = deps.send(group, lead, ticket);
-    if (result.sent) sent.push({ group: group.name, persona: report.persona, status: report.status, roomId: result.roomId });
+    if (result.sent) {
+      if (identity) deps.handled.add(identity);
+      sent.push({ group: group.name, persona: report.persona, status: report.status, roomId: result.roomId });
+    }
     else deps.tell(lead, `要通知 ${report.persona}（${report.status}），但派唔到文員：${result.why}。請 Founder 處理或自己通知。`);
   }
   return sent;

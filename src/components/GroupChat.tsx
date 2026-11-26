@@ -301,7 +301,7 @@ export function GroupChatView({ worktreeCall, orchestratorRoomId, onSetOrchestra
       <img src={isDark ? GUILD_HALL_NIGHT_BANNER : GUILD_HALL_BANNER} alt="" referrerPolicy="no-referrer" className="h-full w-full object-cover opacity-35 dark:opacity-45" />
       <div className="absolute inset-0 bg-gradient-to-b from-[#FBF8F3]/85 via-[#FBF8F3]/70 to-[#FBF8F3]/90 dark:from-[#121624]/82 dark:via-[#151B2E]/64 dark:to-[#121624]/90" />
     </div>
-    <div className="absolute top-0 inset-x-0 z-30">
+    <div className="absolute top-0 inset-x-0 z-30 rounded-b-[24px] border-b border-[#E6DCD0]/70 bg-[#FBF8F3]/74 backdrop-blur-md shadow-[0_10px_28px_-14px_rgba(90,70,50,0.22)] dark:border-[#2E3654]/80 dark:bg-[#151B2E]/84 dark:shadow-[0_12px_30px_-12px_rgba(0,0,0,0.65)] sm:rounded-none sm:border-b-0 sm:bg-transparent sm:backdrop-blur-none sm:shadow-none">
     <header className="relative z-30 flex shrink-0 items-center gap-2 border-b border-[#E6DCD0]/60 bg-[#FBF8F3]/62 backdrop-blur-md dark:border-[#6C7BA8]/25 dark:bg-[#101524]/50 dark:backdrop-blur-xl dark:backdrop-saturate-150 px-3 py-1.5 shadow-[0_6px_18px_-14px_rgba(90,70,50,0.22)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_8px_24px_-12px_rgba(0,0,0,0.65)] sm:px-5 sm:py-1.5">
       {/* One line everywhere: back, name, who is addressed and how they are doing, then the options. */}
       <div className="contents">
@@ -508,7 +508,7 @@ export function GroupChatView({ worktreeCall, orchestratorRoomId, onSetOrchestra
           elapsed={workingState(room.id)!.elapsed} stalled={workingState(room.id)!.stalled} background={Boolean(room.backgroundTasks)} onShowTerminal={() => setTerminalRoomId(room.id)} />;
       })()}
     </div>
-    <div className="relative z-10 shrink-0 space-y-2 border-t border-[#E6DCD0] bg-[#F7F2E9]/50 p-3 sm:px-5 dark:border-[#6C7BA8]/25 dark:bg-[#101524]/50 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_-8px_24px_-12px_rgba(0,0,0,0.65)]">
+    <div className="relative z-10 shrink-0 space-y-1.5 rounded-t-[24px] border-t border-[#E6DCD0]/80 bg-[#FBF8F3]/82 p-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] backdrop-blur-xl shadow-[0_-10px_28px_-14px_rgba(90,70,50,0.18)] dark:border-[#343D5E]/80 dark:bg-[#151B2E]/88 dark:shadow-[0_-12px_30px_-12px_rgba(0,0,0,0.6)] sm:space-y-2 sm:rounded-none sm:border-[#E6DCD0] sm:bg-[#F7F2E9]/50 sm:px-5 sm:pb-3 sm:backdrop-blur-none sm:shadow-none sm:dark:border-[#6C7BA8]/25 sm:dark:bg-[#101524]/50 sm:dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_-8px_24px_-12px_rgba(0,0,0,0.65)]">
       {(awayFromLatest || newMessages) && <ScrollToLatestButton newMessages={newMessages} onClick={() => {
         const element = timelineRef.current;
         if (element) element.scrollTop = element.scrollHeight;
@@ -563,8 +563,8 @@ export function GroupChatView({ worktreeCall, orchestratorRoomId, onSetOrchestra
           title={pending ? t('group.sending') : blocked ?? t('group.send')}
         />
       </form>
-      {room && selected && onCommand && <fieldset disabled={!room.live || pending} className="flex flex-wrap gap-2 disabled:opacity-50" aria-label={t('group.session.settings')}>
-        <ControlBar room={room} character={characters[selected.modelId]} mobile onCommand={(id, command) => onCommand(id, command)}
+      {room && selected && onCommand && <fieldset disabled={!room.live || pending} className="flex w-full flex-wrap gap-2 disabled:opacity-50" aria-label={t('group.session.settings')}>
+        <ControlBar room={room} character={characters[selected.modelId]} mobile dock onCommand={(id, command) => onCommand(id, command)}
           compact={{ disabled: !room.ready || Boolean(room.pendingApproval) || pending, title: '/compact', onRun: () => onCommand(room.id, '/compact') }}
           terminal={{ open: terminalRoomId === room.id, onToggle: () => setTerminalRoomId(current => current === room.id ? null : room.id) }}
           shield={{ disabled: !room.live || pending, autoMode: autoModeOf?.(room.id), onMode: onMode && (auto => onMode(room.id, auto)), onPermissions: () => onCommand(room.id, '/permissions') }} />

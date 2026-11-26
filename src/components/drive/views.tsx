@@ -1,7 +1,7 @@
 import { t as translateCurrent } from '../../i18n';
 import { useT } from '../../i18n/useLang';
-import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Cloud, File as FileIcon, FileText, Folder, MoreHorizontal } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, Cloud, File as FileIcon, FileText, Folder, Loader2, MoreHorizontal } from 'lucide-react';
 import { Markdown } from '../Markdown';
 import { CopyLink, ago } from '../github/views';
 
@@ -16,38 +16,52 @@ export const displayName = (entry: DriveEntry) => (entry.type === 'native' ? ent
 const pill = 'inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full border border-[#E5D7C6] dark:border-[#364062] bg-white/90 dark:bg-[#232B45] px-3 text-[11px] font-semibold text-[#6E5D52] dark:text-[#C5CDE3] transition hover:bg-white dark:hover:bg-[#2B3554] active:scale-95 disabled:opacity-50';
 export { pill as drivePill };
 
-export function Crumbs({ path, onOpen }: { path: string; onOpen: (path: string) => void }) {
+export function Crumbs({ path, onOpen, loading }: { path: string; onOpen: (path: string) => void; loading?: boolean }) {
   const { t } = useT();
   const parts = path ? path.split('/') : [];
-  return <nav aria-label={t('drive.path')} className="flex items-center gap-0.5 overflow-x-auto whitespace-nowrap py-0.5 text-xs text-[#7D6D61] dark:text-[#A4AECC]">
-    <button type="button" onClick={() => onOpen('')} className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-semibold hover:bg-white/80 dark:hover:bg-[#27304D]"><Cloud className="h-3.5 w-3.5 text-[#5B82A6] dark:text-[#9CB2E5]" aria-hidden="true" />Drive</button>
-    {parts.map((part, index) => {
-      const last = index === parts.length - 1;
-      return <span key={index} className="inline-flex shrink-0 items-center gap-0.5">
-        <ChevronRight className="h-3 w-3 text-[#B8A89B] dark:text-[#697496]" aria-hidden="true" />
-        <button type="button" onClick={() => onOpen(parts.slice(0, index + 1).join('/'))}
-          className={`rounded-full px-2 py-0.5 transition hover:bg-white/80 dark:hover:bg-[#27304D] ${last ? 'font-semibold text-[#4A3E36] dark:text-[#ECE7DF]' : ''}`}>{part}</button>
-      </span>;
-    })}
-  </nav>;
+  const parentPath = parts.length > 0 ? parts.slice(0, -1).join('/') : null;
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (navRef.current) navRef.current.scrollLeft = navRef.current.scrollWidth;
+  }, [path]);
+  return <div className="flex items-center gap-1.5">
+    <button type="button" disabled={parentPath === null} onClick={() => parentPath !== null && onOpen(parentPath)} aria-label={t('drive.back')}
+      className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full border border-[#DEC9B8] bg-white/95 px-2.5 py-1 text-[11px] font-bold text-[#4A3E36] shadow-2xs transition-all duration-150 hover:border-[#D48BA5] hover:bg-[#FFF5F8] active:scale-95 disabled:pointer-events-none disabled:opacity-35 dark:border-[#4A5682] dark:bg-[#252E4C] dark:text-[#F0F3FC] dark:hover:border-[#EFA4B2]/70 dark:hover:bg-[#2F3A5E]">
+      <ChevronLeft className="h-3.5 w-3.5 text-[#C4668A] dark:text-[#EFA4B2]" strokeWidth={2.4} aria-hidden="true" />
+      <span>{t('drive.back')}</span>
+    </button>
+    <nav ref={navRef} aria-label={t('drive.path')} className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto whitespace-nowrap py-0.5 text-xs text-[#7D6D61] dark:text-[#A4AECC]">
+      <button type="button" onClick={() => onOpen('')} className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-semibold transition-colors active:scale-95 hover:bg-white/80 dark:hover:bg-[#27304D]"><Cloud className="h-3.5 w-3.5 text-[#5B82A6] dark:text-[#9CB2E5]" aria-hidden="true" />Drive</button>
+      {parts.map((part, index) => {
+        const last = index === parts.length - 1;
+        return <span key={index} className="inline-flex shrink-0 items-center gap-0.5">
+          <ChevronRight className="h-3 w-3 text-[#B8A89B] dark:text-[#697496]" aria-hidden="true" />
+          <button type="button" onClick={() => onOpen(parts.slice(0, index + 1).join('/'))}
+            className={`rounded-full px-2 py-0.5 transition-colors active:scale-95 hover:bg-white/80 dark:hover:bg-[#27304D] ${last ? 'font-semibold text-[#4A3E36] dark:text-[#ECE7DF]' : ''}`}>{part}</button>
+        </span>;
+      })}
+    </nav>
+    {loading && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#C4668A] dark:text-[#EFA4B2]" aria-hidden="true" />}
+  </div>;
 }
 
-export function DriveRows({ entries, onOpen, onMenu, now }: { entries: DriveEntry[]; onOpen: (entry: DriveEntry) => void; onMenu?: (entry: DriveEntry) => void; now?: number }) {
+export function DriveRows({ entries, onOpen, onMenu, now, loading }: { entries: DriveEntry[]; onOpen: (entry: DriveEntry) => void; onMenu?: (entry: DriveEntry) => void; now?: number; loading?: boolean }) {
   const { t } = useT();
   if (!entries.length) return <p className="px-2 py-8 text-center text-sm text-[#7D6D61] dark:text-[#A4AECC]">{t('drive.empty')}</p>;
-  return <ul className="space-y-1.5">{entries.map(entry => {
+  return <ul className={`space-y-1.5 transition-opacity duration-150 ${loading ? 'opacity-60' : ''}`}>{entries.map(entry => {
     const badge = entry.type === 'dir'
       ? <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#EBF4EC] dark:bg-[#20332C] text-[#5A8D66] dark:text-[#96C7A3]"><Folder className="h-4 w-4" aria-hidden="true" /></span>
       : entry.textual
         ? <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#FCEEF2] dark:bg-[#312338] text-[#C4668A] dark:text-[#EFA4B2]"><FileText className="h-4 w-4" aria-hidden="true" /></span>
         : <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#F4EDE4] dark:bg-[#252D48] text-[#8C7A6E] dark:text-[#A4AECC]"><FileIcon className="h-4 w-4" aria-hidden="true" /></span>;
-    return <li key={entry.name} className="flex items-center rounded-2xl border border-[#EDE3D5]/90 dark:border-[#2E3654] bg-white/75 dark:bg-[#1E253D]/90 shadow-[0_1px_2px_rgba(90,70,50,0.03)] transition hover:bg-white dark:hover:bg-[#242C48]">
+    return <li key={entry.name} className="group flex items-center rounded-2xl border border-[#EDE3D5]/90 dark:border-[#2E3654] bg-white/75 dark:bg-[#1E253D]/90 shadow-[0_1px_2px_rgba(90,70,50,0.03)] transition-all duration-150 hover:bg-white dark:hover:bg-[#242C48] active:scale-[0.985] active:bg-[#FCF0F4]/80 dark:active:bg-[#2A2136]">
       <button type="button" data-drive-row={entry.type} data-name={entry.name} onClick={() => onOpen(entry)} className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left">
         {badge}
         <span className="min-w-0 flex-1"><span className="block truncate text-[13.5px] font-semibold text-[#4A3E36] dark:text-[#ECE7DF]">{displayName(entry)}</span>
           <span className="block truncate text-[11px] text-[#8C7A6E] dark:text-[#98A3C2]">{entry.type === 'dir' ? ago(entry.modified, now) : `${entry.type === 'native' ? nativeLabel(entry.name) : fileSize(entry.size)} · ${ago(entry.modified, now)}`}</span></span>
+        {entry.type === 'dir' && <ChevronRight className="h-4 w-4 shrink-0 text-[#C2B3A6] transition-transform duration-150 group-hover:translate-x-0.5 dark:text-[#667296]" aria-hidden="true" />}
       </button>
-      {onMenu && <button type="button" aria-label={t('drive.more', { name: displayName(entry) })} data-drive-menu={entry.name} onClick={() => onMenu(entry)} className="mr-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#7D6D61] dark:text-[#A4AECC] transition hover:bg-[#F3ECE1] dark:hover:bg-[#2C3658]"><MoreHorizontal className="h-4 w-4" aria-hidden="true" /></button>}
+      {onMenu && <button type="button" aria-label={t('drive.more', { name: displayName(entry) })} data-drive-menu={entry.name} onClick={() => onMenu(entry)} className="mr-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#7D6D61] dark:text-[#A4AECC] transition hover:bg-[#F3ECE1] active:scale-95 dark:hover:bg-[#2C3658]"><MoreHorizontal className="h-4 w-4" aria-hidden="true" /></button>}
     </li>;
   })}</ul>;
 }

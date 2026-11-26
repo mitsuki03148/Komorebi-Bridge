@@ -42,7 +42,7 @@ function setup(lead: TerminalRoom, send?: (...args: any[]) => any) {
   const handled = new Set<string>()
   const deps = {
     inboxRoot: root, since: Date.now() - 60_000, groups: () => [group], room: (id: string) => id === 'lead' ? lead : undefined,
-    handled: { has: (id: string) => handled.has(id), add: (id: string) => void handled.add(id) },
+    handled: { has: (id: string) => handled.has(id), add: (id: string): void => { handled.add(id); } },
     send: send ?? ((_g: GroupChat, _l: TerminalRoom, ticket: { title: string; body: string }) => { tickets.push(ticket); return { sent: true as const, roomId: 'clerk' } }),
     tell: (_l: TerminalRoom, text: string) => void told.push(text),
   }
@@ -55,6 +55,33 @@ test('one report makes one clerk ticket, and the same report is never sent again
   assert.equal(tickets.length, 1)
   assert.equal(sendPersonaNotices(deps).length, 0, 'handled')
   assert.equal(tickets.length, 1)
+})
+
+test('a clerk completion followed by a fresh lead report for the same Inbox does not reassign it', () => {
+  const lead = room('lead', report())
+  const { deps, tickets } = setup(lead)
+  assert.equal(sendPersonaNotices(deps).length, 1)
+  lead.logs.push({ ...lead.logs[0], id: 'after-clerk', text: report('Clerk completed the notice.') })
+  assert.equal(sendPersonaNotices(deps).length, 0)
+  assert.equal(tickets.length, 1)
+  lead.logs.push({ ...lead.logs[0], id: 'another-inbox', text: report().replace('2026-11-19-music fix', 'another-task') })
+  assert.equal(sendPersonaNotices(deps).length, 1, 'a different task remains eligible')
+  lead.logs.push({ ...lead.logs[0], id: 'same-task-stop', text: report('', 'STOP') })
+  assert.equal(sendPersonaNotices(deps).length, 1, 'a different outcome remains eligible')
+})
+
+test('Inbox deduplication survives restart', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'persona-identity-'))
+  try {
+    const path = join(dir, 'handled.json')
+    const lead = room('lead', report())
+    const { deps } = setup(lead)
+    deps.handled = new HandledReports(path)
+    assert.equal(sendPersonaNotices(deps).length, 1)
+    lead.logs.push({ ...lead.logs[0], id: 'new-entry', text: report('Clerk done.') })
+    deps.handled = new HandledReports(path)
+    assert.equal(sendPersonaNotices(deps).length, 0)
+  } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
 test('a bounded inventory is started before dispatch, and scan setup failure does not block the clerk', () => {

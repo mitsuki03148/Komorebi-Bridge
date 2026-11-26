@@ -11,7 +11,10 @@ import { GroupMemberRoleAction, GroupMemberRoleEditor } from '../src/components/
 import { GroupChatView } from '../src/components/GroupChat';
 import { GroupRoomSidebar } from '../src/components/GroupRoomSidebar';
 import { INITIAL_CHARACTERS } from '../src/data/initialGuildData';
-import { groupRoleFromChoice, groupRoleKey, groupRolePresets, savedGroupRole } from '../src/types/groupRoles';
+import { en } from '../src/i18n/en';
+import { ja } from '../src/i18n/ja';
+import { zh } from '../src/i18n/zh';
+import { groupRoleCategories, groupRoleFromChoice, groupRoleKey, groupRolePresets, savedGroupRole } from '../src/types/groupRoles';
 import type { GroupChat, TerminalRoom } from '../src/types/guild';
 import { ArchiveGroups } from './archive-groups';
 import { Groups, GroupMemberRoleError } from './groups';
@@ -30,6 +33,43 @@ async function fixture(fn: (dir: string, file: string) => Promise<void>) {
   try { await fn(dir, join(dir, 'groups.json')); }
   finally { await rm(dir, { recursive: true, force: true }); }
 }
+
+test('role categories include each preset exactly once', () => {
+  const roles = groupRoleCategories.flatMap(category => [...category.roles]);
+  for (const role of ['implement', 'review', 'debug', 'art-copy', 'native-test', 'clerk', 'cybersecurity']) {
+    assert.ok(groupRoleCategories[0].roles.some(key => key === role));
+  }
+  assert.equal(new Set(roles).size, roles.length);
+  assert.deepEqual([...roles].sort(), [...groupRolePresets].sort());
+});
+
+test('category labels exist in all supported languages', () => {
+  for (const table of [zh, en, ja]) {
+    for (const category of groupRoleCategories) {
+      assert.ok(table[`group.memberRole.category.${category.key}`]);
+    }
+    for (const role of groupRolePresets) {
+      assert.ok(table[`group.memberRole.${role}`]);
+      assert.ok(table[`group.memberRole.description.${role}`]);
+    }
+  }
+});
+
+test('investment preset keys retain older custom role records', () => {
+  for (const key of groupRoleCategories[1].roles) {
+    assert.deepEqual(savedGroupRole({ key, label: key, direction: 'remember' }), { key, label: key, direction: 'remember' });
+    assert.deepEqual(groupRoleFromChoice({ preset: key }), { key });
+  }
+});
+
+test('selected role opens its category and exposes every investment role', () => {
+  const html = renderToStaticMarkup(createElement(GroupMemberRoleEditor, {
+    roomName: 'Room A', role: { key: 'risk-manager' }, pending: false, onSave() {}, onClose() {},
+  }));
+  assert.match(html, /aria-expanded="true"[^>]*>.*?投資/);
+  for (const key of groupRoleCategories[1].roles) assert.match(html, new RegExp(`value="${key}"`));
+  assert.match(html, /checked="" value="risk-manager"/);
+});
 
 test('role keys accept only canonical presets and normalized, bounded custom names', () => {
   assert.deepEqual(groupRoleFromChoice({ custom: ' ＱＡ   Lead ' }), { key: 'qa lead', label: 'QA Lead' });
@@ -174,7 +214,11 @@ test('the role editor offers presets, custom and removal, and its entry is absen
   const pending = renderToStaticMarkup(createElement(GroupMemberRoleEditor, {
     roomName: 'Room A', pending: true, role: { key: 'qa team', label: 'QA Team' }, onSave() {}, onClose() {},
   }));
-  for (const key of [...groupRolePresets, 'none', 'custom']) assert.ok(pending.includes(`<option value="${key}"`));
+  assert.match(pending, /value="none"/);
+  assert.match(pending, /value="custom"/);
+  assert.match(pending, /aria-expanded="false"[^>]*>.*?工程/);
+  assert.match(pending, /aria-expanded="false"[^>]*>.*?投資/);
+  assert.doesNotMatch(pending, /媒體與行銷|財務|通用/);
   assert.match(pending, /role="dialog" aria-modal="true"/);
   assert.match(pending, /value="QA Team"/);
   assert.match(pending, /@qa team/);

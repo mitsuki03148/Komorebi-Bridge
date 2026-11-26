@@ -1061,6 +1061,7 @@ test('a DONE final report from the lead cancels only the open tickets the lead s
   value.bench.done(finished.id, hitomi.sessionId, 'PASS');
   const members = value.bench.send({ groupId: 'g', from: hikaru, to: hitomi, title: '組員之間', body: 'z' });
   const otherGroup = value.bench.send({ groupId: 'h', from: hibiki, to: hikaru, title: '另一組', body: 'w' });
+  const postal = value.bench.send({ groupId: 'g', from: hibiki, to: hikaru, title: '通知', body: 'postal', purpose: 'persona-notice' });
 
   assert.deepEqual(cancelLeadTickets(value, 'g', lead), [open.id]);
   assert.equal(value.bench.get(open.id)?.status, 'done');
@@ -1068,6 +1069,7 @@ test('a DONE final report from the lead cancels only the open tickets the lead s
   assert.equal(value.bench.get(finished.id)?.note, 'PASS', 'a finished ticket is untouched');
   assert.equal(value.bench.get(members.id)?.status, 'new', 'a member\'s own ticket is not the lead\'s to cancel');
   assert.equal(value.bench.get(otherGroup.id)?.status, 'new', 'another group is untouched');
+  assert.equal(value.bench.get(postal.id)?.status, 'new', 'a Bridge persona notice survives the same final report');
   assert.ok(notes.some(([id, line]) => id === lead.id && line.includes(`#${open.id}`)));
   assert.deepEqual(cancelLeadTickets(value, 'g', lead), [], 'nothing twice');
 });

@@ -3,7 +3,7 @@ import { useT } from './i18n/useLang';
 import { translateServerNotice } from './i18n/serverNotice';
 import { localizeCharacters } from './i18n/characterName';
 import {
-  Settings2, QrCode, Sparkles, X,
+  Settings2, QrCode, Sparkles, X, ChevronDown, MoreHorizontal,
   Minimize2, AlertTriangle, FlaskConical, Github, Cloud, Inbox as InboxIcon, Archive, TerminalSquare, Users, Copy, Crown, Pencil, ArrowRightLeft, LogOut, Plus, Search, ShieldCheck,
 } from 'lucide-react';
 import { GUILD_HALL_BANNER, GUILD_HALL_NIGHT_BANNER, INITIAL_CHARACTERS, quotaHint } from './data/initialGuildData';
@@ -36,7 +36,7 @@ import { PermissionButton } from './components/PermissionButton';
 import { DaySeparator, MessageBubble } from './components/MessageBubble';
 import { VoiceButton } from './components/VoiceButton';
 import { appendDictation, createTranscriber, type Transcriber } from './utils/voice';
-import { ControlBar } from './components/ControlBar';
+import { ControlBar, ControlButton, controlButtonClass } from './components/ControlBar';
 import { benchWakeAsLine, bubbleRuns, isBenchDelivery } from './utils/bubbleRuns';
 import { roomAutoMode } from './utils/launchMode';
 import { LiveTerminal, LiveTerminalControls } from './components/LiveTerminal';
@@ -1143,17 +1143,34 @@ function GuildApp() {
   useEffect(() => () => clearTimeout(roleTouch.current), []);
   /** Phone only: a long press on a character card opens the new-room dialog for that character. */
   const openRoleRoom = (modelId: CLIModelId) => { setNewRoomModalModel(modelId); setNewRoomModalOpen(true); };
-  /** The room row on the phone: a plus to open a room for this character, and (only when there are many) a search. */
-  const [roomSearchOpen, setRoomSearchOpen] = useState(false);
+  /** Phone A1 room dropdown & mobile topbar more-drawer. */
   const [roomQuery, setRoomQuery] = useState('');
-  useEffect(() => { setRoomSearchOpen(false); setRoomQuery(''); }, [mobileRole]);
-  const roomSearchThreshold = 8;
+  const [mobileRoomMenuOpen, setMobileRoomMenuOpen] = useState(false);
+  const mobileRoomMenuRef = useRef<HTMLDivElement>(null);
+  const [topMoreOpen, setTopMoreOpen] = useState(false);
+  const topMoreRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { setMobileRoomMenuOpen(false); setRoomQuery(''); }, [mobileRole, selectedRoom?.id]);
+  useEffect(() => {
+    if (!mobileRoomMenuOpen && !topMoreOpen) return;
+    const outside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (mobileRoomMenuOpen && !mobileRoomMenuRef.current?.contains(target)) setMobileRoomMenuOpen(false);
+      if (topMoreOpen && !topMoreRef.current?.contains(target)) setTopMoreOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setMobileRoomMenuOpen(false); setTopMoreOpen(false); }
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, [mobileRoomMenuOpen, topMoreOpen]);
   const mobileRooms = rooms.filter(room => room.modelId === mobileRole);
   const mobileRoomSearch = roomQuery.trim().toLowerCase();
   const filteredMobileRooms = mobileRooms.filter(room => room.roomName.toLowerCase().includes(mobileRoomSearch));
-  const mobileNavigation = (<>
-            {/* 3 Character Quick Switcher Strip (Larger Chibi Avatar + Name & % cleanly contained inside box) */}
-            <div className="px-3 py-2 bg-white/35 border-b border-[#E6DCD0]/50 grid grid-cols-3 gap-2 shrink-0 dark:bg-[#161C30]/55 dark:border-[#2E3654]/60 [&_.guild-selection]:bg-white/50 dark:[&_.guild-selection]:bg-[#1C233B]/65 [&_.guild-selection]:backdrop-blur-0 [&_.guild-selection[aria-pressed=true]]:bg-[color-mix(in_srgb,var(--selection-surface)_70%,transparent)]">
+  const activeMobileRoom = selectedRoom && selectedRoom.modelId === mobileRole ? selectedRoom : undefined;
+  const mobileNavigation = (<div className="relative z-30 shrink-0 rounded-b-[24px] border-b border-[#E6DCD0]/75 bg-[#FBF8F3]/74 pb-1 backdrop-blur-md shadow-[0_10px_28px_-14px_rgba(90,70,50,0.22)] dark:border-[#2E3654]/80 dark:bg-[#151B2E]/84 dark:shadow-[0_12px_30px_-12px_rgba(0,0,0,0.65)]">
+            {/* 3 Character Quick Switcher Strip (Floating Guild Charm Cards) */}
+            <div className="px-3 pt-1.5 pb-1.5 grid grid-cols-3 gap-2 shrink-0 [&_.guild-selection]:bg-white/60 dark:[&_.guild-selection]:bg-[#1C233B]/70 [&_.guild-selection[aria-pressed=true]]:bg-[color-mix(in_srgb,var(--selection-surface)_70%,transparent)]">
               {(['AGY', 'CODEX', 'CLAUDE'] as CLIModelId[]).map((m) => {
                 const c = characters[m];
                 const mRooms = rooms.filter((r) => r.modelId === m);
@@ -1201,42 +1218,85 @@ function GuildApp() {
               })}
             </div>
 
-            {/* Room Bubbles Horizontal Pill Bar (shown once a character is picked) */}
-            {mobileRole && <div {...roomActions} style={{ WebkitTouchCallout: 'none' }} className="px-2.5 py-1.5 bg-white/35 border-b border-[#E6DCD0]/50 flex items-center gap-1.5 overflow-x-auto shrink-0 dark:bg-[#161C30]/55 dark:border-[#2E3654]/60 [&_.guild-selection]:bg-white/50 dark:[&_.guild-selection]:bg-[#1C233B]/65 [&_.guild-selection[aria-current=true]]:bg-[color-mix(in_srgb,var(--selection-surface)_70%,transparent)]">
+            {/* Room Bubbles Horizontal Pill Bar (shown once a character is picked) — A1 Room Sheet + B2 Room Controls */}
+            {mobileRole && <div {...roomActions} style={{ WebkitTouchCallout: 'none' }} className="relative z-30 px-3 py-1 flex items-center gap-1.5 shrink-0 [&_.guild-selection]:bg-white/65 dark:[&_.guild-selection]:bg-[#1C233B]/75 [&_.guild-selection[aria-current=true]]:bg-[color-mix(in_srgb,var(--selection-surface)_70%,transparent)]">
               <button type="button" data-room-add aria-label={t('room.create.for', { name: characters[mobileRole].characterName })} title={t('room.create.for', { name: characters[mobileRole].characterName })} onClick={() => openRoleRoom(mobileRole)}
-                className="sticky left-0 z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#E2D6C5] dark:border-[#364062] bg-[#FBF8F3] dark:bg-[#1D243C] text-[#8C6D58] dark:text-[#B5BED6] shadow-[6px_0_8px_-4px_rgba(251,248,243,0.95)] dark:shadow-[6px_0_8px_-4px_rgba(18,22,36,0.9)] active:scale-95"><Plus size={14} aria-hidden="true" /></button>
-              {mobileRooms.length > roomSearchThreshold && (roomSearchOpen
-                ? <div data-room-search className="flex min-w-[9rem] shrink-0 items-center gap-1 rounded-full border border-[#E2D6C5] dark:border-[#364062] bg-white dark:bg-[#1E253D] px-2">
-                    <Search size={12} className="shrink-0 text-[#A39284] dark:text-[#8E98B8]" aria-hidden="true" />
-                    <input type="search" autoFocus aria-label={t('room.search.label')} value={roomQuery} onChange={event => setRoomQuery(event.target.value)} placeholder={t('room.search.placeholder')} className="min-w-0 flex-1 bg-transparent py-0.5 text-[16px] text-[#4A3E36] dark:text-[#ECE7DF] outline-none placeholder:text-[11px] placeholder:text-[#A39284] dark:placeholder:text-[#7E89A8]" />
-                    <button type="button" aria-label={t('room.search.close')} onClick={() => { setRoomSearchOpen(false); setRoomQuery(''); }} className="flex h-5 w-5 shrink-0 items-center justify-center text-[#A39284] dark:text-[#8E98B8]"><X size={12} aria-hidden="true" /></button>
+                className="guild-liquid-glass flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[#E2D6C5]/85 dark:border-[#3A456A]/85 text-[#8C6D58] dark:text-[#C5CDE3] transition-colors hover:border-[#D9A7B8] hover:text-[#8E435F] dark:hover:border-[#6B4A6E] dark:hover:text-[#F4C4D4] active:scale-95"><Plus size={14} aria-hidden="true" /></button>
+
+              <div ref={mobileRoomMenuRef} className="relative min-w-0 flex-1">
+                <button
+                  type="button"
+                  data-cli={mobileRole}
+                  aria-haspopup="menu"
+                  aria-expanded={mobileRoomMenuOpen}
+                  aria-current={activeMobileRoom ? 'true' : undefined}
+                  onClick={() => setMobileRoomMenuOpen(open => !open)}
+                  className="guild-selection flex min-h-7 w-full min-w-0 items-center gap-1.5 rounded-full border border-[#E2D6C5]/85 dark:border-[#3A456A]/85 px-2.5 py-1 text-left text-[11.5px] font-semibold text-[#5A4B40] dark:text-[#ECE7DF] backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] cursor-pointer"
+                >
+                  {activeMobileRoom && working[activeMobileRoom.id] && <WorkingSpark stalled={working[activeMobileRoom.id] === 'stalled'} background={Boolean(activeMobileRoom.backgroundTasks)} />}
+                  <span className="min-w-0 flex-1 truncate">
+                    {activeMobileRoom ? activeMobileRoom.roomName : `${characters[mobileRole].characterName} · ${mobileRooms.length}`}
+                  </span>
+                  {activeMobileRoom && isRoomPinned(activeMobileRoom, pinnedKeys) && <RoomPinBadge />}
+                  {activeMobileRoom && isRoomPinned(activeMobileRoom, protectedKeys) && <ShieldCheck size={12} aria-label={t('room.protect.badge')} className="shrink-0 text-[#4E7A55] dark:text-[#96C7A3]" />}
+                  {activeMobileRoom && groups.some(group => group.orchestratorRoomId === activeMobileRoom.id) && <Crown size={12} aria-label={t('group.sidebar.leader')} className="shrink-0 text-[#B88A2A]" />}
+                  {activeMobileRoom?.status === 'waiting_approval' && <AlertTriangle aria-label={t('approval.waiting')} className="h-3 w-3 shrink-0 text-[#D68631]" />}
+                  <ChevronDown className={`h-3.5 w-3.5 shrink-0 opacity-65 transition-transform duration-150 ${mobileRoomMenuOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+                </button>
+
+                {mobileRoomMenuOpen && (
+                  <div role="menu" aria-label={t('room.search.label')} className="guild-pop-in origin-top-left absolute left-0 top-full z-50 mt-1.5 w-[min(19.5rem,calc(100vw-1.5rem))] rounded-[22px] border border-[#E5D7C6]/90 bg-[#FFFDF9]/95 p-2 shadow-[0_20px_44px_-12px_rgba(74,62,54,0.28),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl dark:border-[#3A456A]/90 dark:bg-[#192036]/95 dark:shadow-[0_20px_44px_-12px_rgba(0,0,0,0.68),inset_0_1px_0_rgba(255,255,255,0.08)]">
+                    {mobileRooms.length > 5 && (
+                      <div data-room-search className="mb-1.5 flex items-center gap-1.5 rounded-full border border-[#E6DCD0] dark:border-[#364062] bg-white dark:bg-[#141A2C] px-2.5">
+                        <Search size={12} className="shrink-0 text-[#A39284] dark:text-[#8E98B8]" aria-hidden="true" />
+                        <input type="search" aria-label={t('room.search.label')} value={roomQuery} onChange={event => setRoomQuery(event.target.value)} placeholder={t('room.search.placeholder')} className="min-h-8 min-w-0 flex-1 bg-transparent py-1 text-[16px] text-[#4A3E36] dark:text-[#ECE7DF] outline-none placeholder:text-[11px] placeholder:text-[#A39284] dark:placeholder:text-[#7E89A8]" />
+                        {roomQuery && <button type="button" aria-label={t('room.search.close')} onClick={() => setRoomQuery('')} className="flex h-5 w-5 shrink-0 items-center justify-center text-[#A39284] dark:text-[#8E98B8]"><X size={12} aria-hidden="true" /></button>}
+                      </div>
+                    )}
+                    <div className="max-h-64 space-y-1 overflow-y-auto">
+                      {orderPinnedRooms(filteredMobileRooms, pinnedKeys).map((r) => {
+                        const active = r.id === selectedRoom?.id;
+                        return (
+                          <button
+                            key={r.id}
+                            type="button"
+                            role="menuitem"
+                            data-room-id={r.id}
+                            data-cli={r.modelId}
+                            aria-current={active ? 'true' : undefined}
+                            onClick={() => { selectRoom(r.id); setMobileRoomMenuOpen(false); }}
+                            className="guild-selection flex w-full items-center gap-1.5 rounded-xl border border-transparent px-2.5 py-2 text-left text-xs font-semibold text-[#5A4B40] transition-all hover:bg-[#F5EFE6]/85 active:scale-[0.985] dark:text-[#D5DCEE] dark:hover:bg-[#252D49]"
+                          >
+                            {working[r.id] && <WorkingSpark stalled={working[r.id] === 'stalled'} background={Boolean(r.backgroundTasks)} />}
+                            <span className="min-w-0 flex-1 truncate">{r.roomName}</span>
+                            {isRoomPinned(r, pinnedKeys) && <RoomPinBadge />}
+                            {isRoomPinned(r, protectedKeys) && <ShieldCheck size={12} aria-label={t('room.protect.badge')} className="shrink-0 text-[#4E7A55] dark:text-[#96C7A3]" />}
+                            {groups.some(group => group.orchestratorRoomId === r.id) && <Crown size={12} aria-label={t('group.sidebar.leader')} className="shrink-0 text-[#B88A2A]" />}
+                            {r.status === 'waiting_approval' && <AlertTriangle aria-label={t('approval.waiting')} className="h-3 w-3 shrink-0 text-[#D68631]" />}
+                            {attention.unread[r.id] && !active && <span aria-label={t('room.reply.new')} className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#D9828B]" />}
+                          </button>
+                        );
+                      })}
+                      {!filteredMobileRooms.length && (
+                        <p className="px-2.5 py-3 text-center text-xs text-[#8C7A6E] dark:text-[#98A3C2]">{t('room.search.placeholder')}</p>
+                      )}
+                    </div>
                   </div>
-                : <button type="button" data-room-search-open aria-label={t('room.search.label')} onClick={() => setRoomSearchOpen(true)} className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#E2D6C5] dark:border-[#364062] bg-white/70 dark:bg-[#1E253D]/80 text-[#8C6D58] dark:text-[#B5BED6] active:scale-95"><Search size={13} aria-hidden="true" /></button>)}
-              {orderPinnedRooms(filteredMobileRooms, pinnedKeys).map((r) => {
-                const active = r.id === selectedRoom?.id;
-                return (
-                  <button
-                    key={r.id}
-                    type="button"
-                    data-room-id={r.id}
-                    data-cli={r.modelId}
-                    aria-current={active ? 'true' : undefined}
-                    onClick={() => selectRoom(r.id)}
-                    className="guild-selection max-w-[min(65vw,15rem)] px-2.5 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer border border-[#E2D6C5] dark:border-[#364062] bg-white dark:bg-[#1E253D] text-[#6E5D52] dark:text-[#C5CDE3]"
-                  >
-                    {working[r.id] && <WorkingSpark stalled={working[r.id] === 'stalled'} background={Boolean(r.backgroundTasks)} />}
-                    <span className="min-w-0 truncate">{r.roomName}</span>
-                    {isRoomPinned(r, pinnedKeys) && <RoomPinBadge />}
-                    {isRoomPinned(r, protectedKeys) && <ShieldCheck size={12} aria-label={t('room.protect.badge')} className="shrink-0 text-[#4E7A55] dark:text-[#96C7A3]" />}
-                    {groups.some(group => group.orchestratorRoomId === r.id) && <Crown size={12} aria-label={t('group.sidebar.leader')} className="shrink-0 text-[#B88A2A]" />}
-                    {r.status === 'waiting_approval' && <AlertTriangle aria-label={t('approval.waiting')} className="h-3 w-3 shrink-0 text-[#D68631]" />}
-                    {attention.unread[r.id] && !active && <span aria-label={t('room.reply.new')} className="h-1.5 w-1.5 rounded-full bg-[#D9828B]" />}
-                  </button>
-                );
-              })}
+                )}
+              </div>
+
+              {activeMobileRoom && (
+                <div data-mobile-room-controls className="flex shrink-0 items-center gap-0.5">
+                  <ControlButton icon={<TerminalSquare size={14} aria-hidden="true" />} label={t('bottombar.terminal')} pressed={terminalRoomId === activeMobileRoom.id} accent={roleAccent[activeMobileRoom.modelId]} onClick={() => setTerminalRoomId(current => current === activeMobileRoom.id ? null : activeMobileRoom.id)} />
+                  <PermissionButton room={activeMobileRoom} disabled={!activeMobileRoom.live || actionPending} autoMode={launchModes ? roomAutoMode(activeMobileRoom, launchModes) : undefined}
+                    onMode={launchModes ? auto => send({ type: 'SET_ROOM_MODE', roomId: activeMobileRoom.id, auto }) : undefined}
+                    onPermissions={() => handleSendPrompt(activeMobileRoom.id, '/permissions')} className={controlButtonClass} />
+                  {liveControls}
+                </div>
+              )}
             </div>}
 
-  </>);
+  </div>);
 
   return (
     <ImagePreviewProvider value={imagePreviews}>
@@ -1258,8 +1318,8 @@ function GuildApp() {
         onDismissApproval={approvalId => setDismissedApprovals(current => [...current, approvalId])}
         onCloseToast={id => setToasts(current => current.filter(item => item.id !== id))} />
 
-      {/* Minimalist Komorebi Top Bar: "木漏れ日" on Left, Circular Icon Buttons on Right */}
-      <header className="relative z-40 sticky top-0 flex items-center justify-between gap-1.5 px-2.5 sm:gap-4 sm:px-5 py-1 border-b border-[#E6DCD0]/60 bg-white/45 dark:border-[#2C3450]/70 dark:bg-[#151B2E]/72 shadow-[0_6px_18px_-14px_rgba(90,70,50,0.3)] dark:shadow-[0_6px_18px_-14px_rgba(0,0,0,0.6)] shrink-0 select-none" style={{ position: 'sticky', top: 0 }}>
+      {/* Minimalist Komorebi Top Bar: "木漏れ日" on Left, Floating Glass Icon Capsule on Right */}
+      <header className="relative z-40 sticky top-0 flex items-center justify-between gap-1.5 px-3 sm:gap-4 sm:px-5 py-1.5 bg-[#FBF8F3]/74 sm:bg-gradient-to-b sm:from-[#FBF8F3]/85 sm:via-[#FBF8F3]/60 sm:to-[#FBF8F3]/45 dark:bg-[#151B2E]/84 sm:dark:from-[#121624]/90 sm:dark:via-[#121624]/65 sm:dark:to-[#121624]/45 sm:border-b sm:border-[#E6DCD0]/60 sm:dark:border-[#2C3450]/70 backdrop-blur-md shrink-0 select-none" style={{ position: 'sticky', top: 0 }}>
         <button type="button" onClick={() => { setSelectedGroupId(null); setSelectedRoomId(''); setMobileRole(null); }}
           className="flex min-w-0 shrink items-center gap-1.5 whitespace-nowrap rounded-full py-0.5 pr-1 transition-transform active:scale-[0.97] cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069] sm:shrink-0 sm:gap-2 sm:pr-1.5">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#E2D6C5]/80 bg-[#FFFDF9]/85 p-0.5 shadow-2xs dark:border-[#6C7BA8]/35 dark:bg-[#1D243C]/85" aria-hidden="true">
@@ -1269,15 +1329,15 @@ function GuildApp() {
         </button>
 
         {/* Right: Cohesive Frosted Toolbar Capsule (Matching 木漏れ日 Top-Right Icons) */}
-        <div role="toolbar" aria-label={t('topbar.toolbar')} className="guild-liquid-glass flex items-center gap-0.5 rounded-full border border-[#E2D6C5]/85 dark:border-[#343D5E]/85 p-0.5 shrink-0">
+        <div role="toolbar" aria-label={t('topbar.toolbar')} className="guild-liquid-glass flex items-center gap-0.5 rounded-full border border-[#E2D6C5]/85 dark:border-[#3A4468]/85 p-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] shrink-0">
           <button type="button" onClick={event => { burstPetals(event.currentTarget, { count: 3 }); setDriveOpen(true); }} aria-label="Drive" title={t('topbar.drive.title')}
-            className="guild-tap w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-[#F3ECE1]/85 dark:hover:bg-[#27304D] text-[#6E5D52] dark:text-[#B5BED6] flex items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]">
-            <Cloud className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            className="guild-tap hidden sm:flex w-8 h-8 rounded-full transition-colors hover:bg-[#EBF4EE]/90 hover:text-[#4F8062] dark:hover:bg-[#1F312B] dark:hover:text-[#96C7A3] text-[#6E5D52] dark:text-[#B5BED6] items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]">
+            <Cloud className="w-4 h-4" />
           </button>
 
           <button type="button" onClick={event => { burstPetals(event.currentTarget, { count: 3 }); setGhTarget(undefined); setGhOpen(true); }} aria-label="GitHub" title="GitHub（repo、issues、code、commits）"
-            className="guild-tap w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-[#F3ECE1]/85 dark:hover:bg-[#27304D] text-[#6E5D52] dark:text-[#B5BED6] flex items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]">
-            <Github className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            className="guild-tap hidden sm:flex w-8 h-8 rounded-full transition-colors hover:bg-[#EEF0FA]/90 hover:text-[#575F8C] dark:hover:bg-[#252B4A] dark:hover:text-[#BFC7F5] text-[#6E5D52] dark:text-[#B5BED6] items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]">
+            <Github className="w-4 h-4" />
           </button>
 
           <div ref={groupDropdownRef} className="relative shrink-0" data-group-dropdown>
@@ -1333,22 +1393,24 @@ function GuildApp() {
             )}
           </div>
 
+          <span aria-hidden="true" className="mx-0.5 h-3.5 w-px shrink-0 bg-[#E3D8CB]/80 dark:bg-[#343D5E]/80" />
+
           <button type="button" onClick={event => { burstPetals(event.currentTarget, { count: 3 }); setInboxPendingFirst(!inboxSupported); setInboxOpen(true); }} aria-label={t('inbox.pendingCount', { count: pendingCount })} title={inboxSupported ? t('topbar.inbox.title') : t('inbox.pending')}
-            className="guild-tap relative flex w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-[#F3ECE1]/85 dark:hover:bg-[#27304D] text-[#6E5D52] dark:text-[#B5BED6] items-center justify-center shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]">
+            className="guild-tap relative flex w-7 h-7 sm:w-8 sm:h-8 rounded-full transition-colors hover:bg-[#FCF0F4]/90 hover:text-[#A24D6D] dark:hover:bg-[#2E2138] dark:hover:text-[#F0A4B6] text-[#6E5D52] dark:text-[#B5BED6] items-center justify-center shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]">
             <InboxIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" aria-hidden="true" />
             {pendingCount > 0 && <span aria-hidden="true" className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#C86475] dark:bg-[#D9828B] px-1 text-[9.5px] font-bold leading-none text-white ring-2 ring-[#FBF8F3] dark:ring-[#121624] tabular-nums">{pendingCount}</span>}
           </button>
 
           <button type="button" onClick={event => { burstPetals(event.currentTarget, { count: 3 }); setArchiveOpen(true); }}
             aria-label={t('topbar.archive.count', { count: archivedRooms.length })} title={t('topbar.archive.title')}
-            className="guild-tap flex w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-[#F3ECE1]/85 dark:hover:bg-[#27304D] text-[#6E5D52] dark:text-[#B5BED6] items-center justify-center shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]">
-            <Archive className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" aria-hidden="true" />
+            className="guild-tap hidden sm:flex w-8 h-8 rounded-full transition-colors hover:bg-[#F7EFE2]/90 hover:text-[#8A6943] dark:hover:bg-[#2D273A] dark:hover:text-[#DFC498] text-[#6E5D52] dark:text-[#B5BED6] items-center justify-center shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]">
+            <Archive className="w-4 h-4 shrink-0" aria-hidden="true" />
           </button>
 
           <button
             onClick={event => { burstPetals(event.currentTarget, { count: 3 }); setUsageModalOpen(true); }}
             title={t('topbar.quota')}
-            className="guild-tap w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-[#FCE8EB]/85 dark:hover:bg-[#312338] text-[#D9828B] dark:text-[#EFA4B2] flex items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]"
+            className="guild-tap w-7 h-7 sm:w-8 sm:h-8 rounded-full transition-colors hover:bg-[#FCE8EB]/95 dark:hover:bg-[#352239] text-[#D9828B] dark:text-[#EFA4B2] flex items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]"
           >
             <FlaskConical className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
@@ -1358,7 +1420,7 @@ function GuildApp() {
             onClick={event => { burstPetals(event.currentTarget, { count: 3 }); setQrOpen(true); }}
             aria-label={t('topbar.tailscale')}
             title={t('topbar.tailscale')}
-            className="guild-tap hidden sm:flex w-8 h-8 rounded-full hover:bg-[#F3ECE1]/85 dark:hover:bg-[#27304D] text-[#6E5D52] dark:text-[#B5BED6] items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]"
+            className="guild-tap hidden sm:flex w-8 h-8 rounded-full transition-colors hover:bg-[#F3ECE1]/85 dark:hover:bg-[#27304D] text-[#6E5D52] dark:text-[#B5BED6] items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]"
           >
             <QrCode className="w-4 h-4" />
           </button>
@@ -1368,10 +1430,52 @@ function GuildApp() {
             onClick={event => { burstPetals(event.currentTarget, { count: 3 }); setSettingsOpen(true); }}
             aria-label={t('topbar.settings')}
             title={t('topbar.settings.title')}
-            className="guild-tap w-7 h-7 sm:w-8 sm:h-8 rounded-full hover:bg-[#F3ECE1]/85 dark:hover:bg-[#27304D] text-[#6E5D52] dark:text-[#B5BED6] flex items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]"
+            className="guild-tap hidden sm:flex w-8 h-8 rounded-full transition-colors hover:bg-[#F3EEF8]/90 hover:text-[#7A598C] dark:hover:bg-[#2A2442] dark:hover:text-[#D1B5E8] text-[#6E5D52] dark:text-[#B5BED6] items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069]"
           >
-            <Settings2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <Settings2 className="w-4 h-4" />
           </button>
+
+          {/* Phone-only Guild More Drawer (2×2 pastel glass grid for Drive, GitHub, Archive, Settings) */}
+          <div ref={topMoreRef} className="relative shrink-0 sm:hidden">
+            <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={topMoreOpen}
+              aria-label={t('topbar.toolbar')}
+              onClick={() => setTopMoreOpen(open => !open)}
+              className={`guild-tap flex h-7 w-7 items-center justify-center rounded-full transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069] ${
+                topMoreOpen
+                  ? 'bg-[#FCF0F4] text-[#8E435F] dark:bg-[#2E2138] dark:text-[#F4C4D4]'
+                  : 'text-[#6E5D52] hover:bg-[#F3ECE1]/85 dark:text-[#B5BED6] dark:hover:bg-[#27304D]'
+              }`}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            {topMoreOpen && (
+              <div role="menu" className="guild-pop-in origin-top-right absolute right-0 top-full z-50 mt-2 grid w-56 max-w-[calc(100vw-1.5rem)] grid-cols-2 gap-1.5 rounded-[22px] border border-[#E5D7C6]/90 bg-[#FFFDF9]/95 p-2 shadow-[0_20px_44px_-12px_rgba(74,62,54,0.28),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl dark:border-[#3A456A]/90 dark:bg-[#192036]/95 dark:shadow-[0_20px_44px_-12px_rgba(0,0,0,0.68),inset_0_1px_0_rgba(255,255,255,0.08)]">
+                <button type="button" role="menuitem" title={t('topbar.drive.title')} onClick={event => { burstPetals(event.currentTarget, { count: 3 }); setTopMoreOpen(false); setDriveOpen(true); }}
+                  className="flex min-w-0 flex-col items-center gap-1 overflow-hidden rounded-2xl bg-[#EBF4EE]/75 px-2 py-2.5 text-[11px] font-semibold text-[#426E54] transition active:scale-95 dark:bg-[#1F312B]/80 dark:text-[#96C7A3]">
+                  <Cloud className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span className="w-full truncate text-center">Drive</span>
+                </button>
+                <button type="button" role="menuitem" title="GitHub（repo、issues、code、commits）" onClick={event => { burstPetals(event.currentTarget, { count: 3 }); setTopMoreOpen(false); setGhTarget(undefined); setGhOpen(true); }}
+                  className="flex min-w-0 flex-col items-center gap-1 overflow-hidden rounded-2xl bg-[#EEF0FA]/75 px-2 py-2.5 text-[11px] font-semibold text-[#4D557E] transition active:scale-95 dark:bg-[#252B4A]/80 dark:text-[#BFC7F5]">
+                  <Github className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span className="w-full truncate text-center">GitHub</span>
+                </button>
+                <button type="button" role="menuitem" title={t('topbar.archive.title')} onClick={event => { burstPetals(event.currentTarget, { count: 3 }); setTopMoreOpen(false); setArchiveOpen(true); }}
+                  className="flex min-w-0 flex-col items-center gap-1 overflow-hidden rounded-2xl bg-[#F7EFE2]/75 px-2 py-2.5 text-[11px] font-semibold text-[#7A5D3B] transition active:scale-95 dark:bg-[#2D273A]/80 dark:text-[#DFC498]">
+                  <Archive className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span className="w-full truncate text-center">{t('topbar.archive.title')}</span>
+                </button>
+                <button type="button" role="menuitem" title={t('topbar.settings.title')} onClick={event => { burstPetals(event.currentTarget, { count: 3 }); setTopMoreOpen(false); setSettingsOpen(true); }}
+                  className="flex min-w-0 flex-col items-center gap-1 overflow-hidden rounded-2xl bg-[#F3EEF8]/75 px-2 py-2.5 text-[11px] font-semibold text-[#6F4F80] transition active:scale-95 dark:bg-[#2A2442]/80 dark:text-[#D1B5E8]">
+                  <Settings2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span className="w-full truncate text-center">{t('topbar.settings')}</span>
+                </button>
+              </div>
+            )}
+          </div>
 
         </div>
       </header>
@@ -1644,8 +1748,8 @@ function GuildApp() {
 
             </div>
 
-            {/* Pinned Bottom iPhone 17 Composer (with "/" Command Autocomplete + Embedded Send Button) + Clickable Model Popover + Full Low/Med/High/Max Effort + Home Indicator */}
-            <div className="shrink-0 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] bg-[#F7F2E9]/50 dark:bg-[#161C30]/78 border-t border-[#E6DCD0] dark:border-[#2E3654] space-y-1.5 relative">
+            {/* Pinned Full-Width Frosted Bottom Dock (Composer + Integrated Control Strip, no double stacked bubbles) */}
+            <div className="shrink-0 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] rounded-t-[24px] bg-[#FBF8F3]/82 dark:bg-[#151B2E]/88 backdrop-blur-xl border-t border-[#E6DCD0]/80 dark:border-[#343D5E]/80 shadow-[0_-10px_28px_-14px_rgba(90,70,50,0.18)] dark:shadow-[0_-12px_30px_-12px_rgba(0,0,0,0.6)] space-y-1.5 relative">
               {mobileScroll.visible && <ScrollToLatestButton onClick={mobileScroll.goToBottom} newMessages={mobileScroll.newMessages} />}
               {!actionPending && !mobileBlocked && <SlashCommandMenu modelId={selectedRoom.modelId} draft={mobileInput} onSelect={item => {
                 if (item.immediateExecute) handleSendPrompt(selectedRoom.id, item.cmd, true, () => {
@@ -1692,7 +1796,7 @@ function GuildApp() {
               </form>
               {(feedbackMessage || mobileHint) && <p role="status" className={`w-fit max-w-full rounded-full bg-white/55 dark:bg-[#1D243B]/80 px-3 py-1 text-[11px] shadow-[inset_0_0_0_1px_rgba(232,220,210,0.7)] dark:shadow-[inset_0_0_0_1px_rgba(54,64,98,0.7)] ${roomFeedback?.state === 'error' ? 'text-[#8D3F48] dark:text-[#F09AA6]' : feedbackMessage ? 'text-[#3F694A] dark:text-[#96C7A3]' : 'text-[#8C7A6E] dark:text-[#A4AECC]'}`}>{feedbackMessage ?? mobileHint}</p>}
 
-              <ControlBar room={selectedRoom} character={selectedCharacter} mobile onCommand={handleSendPrompt} settingsDisabled={!mobileCapabilities?.settings}
+              <ControlBar room={selectedRoom} character={selectedCharacter} mobile hideRoomControls onCommand={handleSendPrompt} settingsDisabled={!mobileCapabilities?.settings}
                 compact={{ disabled: !mobileCapabilities?.compact, title: mobileCapabilities?.reason ? `/compact · ${mobileCapabilities.reason}` : '/compact', onRun: () => handleRunCompact(selectedRoom.id, true) }}
                 terminal={{ open: terminalRoomId === selectedRoom.id, onToggle: () => setTerminalRoomId(current => current === selectedRoom.id ? null : selectedRoom.id) }}
                 shield={{ disabled: !selectedRoom.live || actionPending, autoMode: launchModes ? roomAutoMode(selectedRoom, launchModes) : undefined,

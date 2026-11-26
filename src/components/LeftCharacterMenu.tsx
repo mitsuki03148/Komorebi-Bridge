@@ -95,9 +95,9 @@ export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
         </span>
       </div>
 
-      {onSelectGroup && groups.length > 0 && <nav aria-label={t('sidebar.groups')} data-group-chips className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-[#E6DCD0]/70 dark:border-[#2E3654]/70 px-3 py-1.5">
+      {onSelectGroup && groups.length > 0 && <nav aria-label={t('sidebar.groups')} data-group-chips className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[#E6DCD0]/65 bg-[#FBF8F3]/55 px-3 py-2 backdrop-blur-sm dark:border-[#2E3654]/70 dark:bg-[#192036]/55">
         {groups.map(group => <button key={group.id} type="button" onClick={() => onSelectGroup(group)} title={t('sidebar.group.title', { name: group.name, count: group.members.length })}
-          className="max-w-[10rem] shrink-0 cursor-pointer truncate rounded-full border border-[#D3D9EE] dark:border-[#3A4369] bg-[#EEF0FA] dark:bg-[#222947] px-2.5 py-0.5 text-[11px] font-semibold text-[#4D557E] dark:text-[#B8BFF0]">{t('sidebar.group.name', { name: group.name })}</button>)}
+          className="max-w-[11rem] shrink-0 cursor-pointer truncate rounded-full border border-[#D6DCF2]/90 bg-[#EEF0FA]/90 px-2.5 py-1 text-[11px] font-semibold text-[#4D557E] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] transition-all duration-150 hover:border-[#BFC8EC] hover:bg-[#E4E8FA] active:scale-95 dark:border-[#3E4870]/90 dark:bg-[#222947]/90 dark:text-[#C5CBFA] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] dark:hover:bg-[#2B3359]">{t('sidebar.group.name', { name: group.name })}</button>)}
       </nav>}
 
       {/* 3 Character Compartments (三格：瞳 AGY / 光 Codex / 響 Claude Code) */}

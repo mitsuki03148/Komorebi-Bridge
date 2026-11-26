@@ -150,18 +150,18 @@ test('the group conversation sits on the same conservatory background as a singl
   assert.match(html, /<div[^>]*class="relative z-10 min-h-0 flex-1[^"]*"[^>]*aria-label="群組對話"/);
 });
 
-test('the panel under the conversation is 50% see-through, with no blur, in group and single rooms alike', async () => {
+test('the panel under the conversation is 50% see-through on Mac/group and a frosted full-width dock on phone', async () => {
   const { readFile } = await import('node:fs/promises');
-  const panel = 'bg-[#F7F2E9]/50';
-  for (const file of ['src/App.tsx', 'src/components/GroupChat.tsx', 'src/components/RightRoomWorkspace.tsx']) {
-    const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
-    const line = source.split('\n').find(text => text.includes(panel));
-    assert.ok(line, `${file} keeps the composer panel semi-transparent`);
-    assert.doesNotMatch(line!, /backdrop-blur/, `${file}: a blur would hide the picture behind the panel`);
-  }
+  const workspaceSource = await readFile(new URL('../src/components/RightRoomWorkspace.tsx', import.meta.url), 'utf8');
+  const wsLine = workspaceSource.split('\n').find(text => text.includes('bg-[#F7F2E9]/50'));
+  assert.ok(wsLine, 'RightRoomWorkspace keeps the composer panel semi-transparent');
+  assert.doesNotMatch(wsLine!, /backdrop-blur/, 'RightRoomWorkspace: a blur would hide the picture behind the panel');
+  // Spec change (瞳's A1+B2 full-width bottom dock): phone uses a rounded frosted dock in both single and group rooms.
+  const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  assert.match(appSource, /rounded-t-\[24px\] bg-\[#FBF8F3\]\/82[^"]*backdrop-blur-xl/);
   const room = { id: 'a', modelId: 'CODEX', roomName: 'a', live: true, ready: true, status: 'idle', remoteControl: {}, logs: [] } as unknown as TerminalRoom;
   const html = renderToStaticMarkup(createElement(GroupChatView, { name: '測試', members: [{ roomId: 'a', modelId: 'CODEX', room }], characters: INITIAL_CHARACTERS, onBack() {}, onSend() {}, onDecision() {}, onMenu() {} }));
-  assert.match(html, /border-t border-\[#E6DCD0\] bg-\[#F7F2E9\]\/50 p-3 sm:px-5/);
+  assert.match(html, /rounded-t-\[24px\] border-t border-\[#E6DCD0\]\/80 bg-\[#FBF8F3\]\/82[^"]*sm:bg-\[#F7F2E9\]\/50/);
 });
 
 test('the composers have no slash button', async () => {
@@ -269,13 +269,12 @@ test('a group shows who else waits for the Founder: a "待你處理 N" entry lis
   assert.match(app, /filter\(room => room\.pendingApproval && !cardIds\.includes\(room\.id\)/);
 });
 
-test('a room row on the phone starts with a plus for the character, and offers search for many rooms', async () => {
+test('a room row on the phone starts with a plus for the character, and offers search inside the room sheet for many rooms', async () => {
   const { readFile } = await import('node:fs/promises');
   const app = await readFile('src/App.tsx', 'utf8');
   assert.match(app, /data-room-add[\s\S]*onClick=\{\(\) => openRoleRoom\(mobileRole\)\}/);
-  assert.match(app, /const roomSearchThreshold = 8/);
   assert.match(app, /const mobileRooms = rooms\.filter\(room => room\.modelId === mobileRole\)/, 'the full character list goes into search');
-  assert.match(app, /mobileRooms\.length > roomSearchThreshold && \(roomSearchOpen/);
+  assert.match(app, /mobileRooms\.length > 5 && \(/);
   assert.match(app, /const filteredMobileRooms = mobileRooms\.filter\(room => room\.roomName\.toLowerCase\(\)\.includes\(mobileRoomSearch\)\)/);
   assert.match(app, /text-\[16px\][^"]*outline-none/, 'the search box is 16px so iOS does not zoom in');
 });

@@ -31,7 +31,8 @@ test('old parent links are ignored on load; a normal save keeps independent grou
     assert.ok(groups.snapshot().every(group => !Object.hasOwn(group, 'parentGroupId')));
     assert.equal(await readFile(path, 'utf8'), legacy, 'loading does not rewrite the saved file');
     const roster = groups.reserveRoster(second.id, b.id)!;
-    assert.match(roster.suffix, /總指揮：房間 member/);
+    assert.match(roster.suffix, /總指揮 ♛：房間 member/);
+    assert.match(roster.suffix, /你就係總指揮 ♛：按任務等級讀 lead skill（一般或冇寫等級都可以派單）。/);
     assert.match(roster.suffix, /告示版：\/board-two\.md/);
     assert.doesNotMatch(roster.suffix, /board-one\.md|主群告示版/);
     roster.finish(false);
@@ -239,7 +240,7 @@ test('a first roster does not choose a lead; an explicit crown persists, can cha
     const group = groups.create('領導', [a, b, c].map(room => ({ roomId: room.id, modelId: room.modelId })));
     assert.equal(group.orchestratorRoomId, undefined);
     const reserved = groups.reserveRoster(group.id, b.id)!;
-    assert.doesNotMatch(reserved.suffix, /總指揮：/, 'an unset crown is not invented in the roster');
+    assert.doesNotMatch(reserved.suffix, /總指揮 ♛：/, 'an unset crown is not invented in the roster');
     assert.match(reserved.suffix, /派單：.* bench send .*--group/);
     reserved.finish(true);
     assert.equal(groups.get(group.id)?.orchestratorRoomId, undefined, 'sending the roster does not set a crown');
@@ -270,8 +271,8 @@ test('the lead can be taken away: nobody is made the lead by default afterwards,
     // The next first prompt does not hand the lead out again, and the roster names none.
     groups.beginVisit(group.id);
     const reserved = groups.reserveRoster(group.id, b.id)!;
-    assert.doesNotMatch(reserved.suffix, /　總指揮：[^/]*（[0-9a-f-]{36}）/, 'the roster names no lead');
-    assert.doesNotMatch(reserved.suffix, /總指揮：/);
+    assert.doesNotMatch(reserved.suffix, /　總指揮 ♛：[^/]*（[0-9a-f-]{36}）/, 'the roster names no lead');
+    assert.doesNotMatch(reserved.suffix, /總指揮 ♛：/);
     reserved.finish(true);
     assert.equal(groups.get(group.id)?.orchestratorRoomId, undefined, 'left unassigned on purpose');
     // Naming one again clears the mark; naming another replaces the first.

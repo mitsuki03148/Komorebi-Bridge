@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import type { GroupChat, TerminalRoom } from '../src/types/guild';
 import { Bench, type BenchParty, ticketText } from './bench';
 import { benchAction, benchHook, benchRequest, dispatchRsiTidy, escalateStalled, escalateUnread, idleWake, stalledWake, startClosedRecipient, type BenchDeps } from './bench-server';
-import { readTidyGroup, tidyGroupFile } from './bench-experience';
+import { BenchExperience, readTidyGroup, tidyGroupFile } from './bench-experience';
 
 const groupId = 'aaaaaaaa-0000-4000-8000-000000000001';
 const other = 'bbbbbbbb-0000-4000-8000-000000000002';
@@ -56,6 +56,64 @@ test('nine versus ten closures, one open tidy, new work kept after completion an
   assert.equal(f.bench.done(task.id, to.sessionId, 'reviewed').notice, undefined);
   assert.ok(f.bench.dispatchTidy(groupId, to, 'lead-room'));
   assert.equal(f.bench.dispatchTidy(groupId, to, 'lead-room'), undefined);
+});
+
+test('readable lesson log needs new material, survives restart, and preserves closure eligibility', () => {
+  const f = fixture();
+  const log = join(f.dir, 'log.jsonl');
+  writeFileSync(log, '');
+  const open = () => new Bench(f.path, f.now, undefined, groupId, undefined, log);
+  for (let i = 0; i < 10; i++) f.complete();
+  assert.equal(open().dispatchTidy(groupId, to, 'lead-room'), undefined, 'no lesson material');
+  writeFileSync(log, JSON.stringify({ action: 'add', lesson: 'fixture' }) + '\n');
+  let bench = open();
+  const first = bench.dispatchTidy(groupId, to, 'lead-room')!;
+  assert.ok(first); assert.match(first.body, /lesson report/); assert.match(first.body, /所有角色/);
+  bench.done(first.id, to.sessionId);
+  for (let i = 0; i < 10; i++) {
+    const task = bench.send({ groupId, from, to, body: 'next work' }); bench.done(task.id, to.sessionId);
+  }
+  bench = open();
+  assert.equal(bench.dispatchTidy(groupId, to, 'lead-room'), undefined, 'same material after restart');
+  writeFileSync(log, JSON.stringify({ action: 'add', lesson: 'fixture' }) + '\n' + JSON.stringify({ action: 'recur', lesson: 'fixture' }) + '\n');
+  assert.ok(bench.dispatchTidy(groupId, to, 'lead-room'), 'new material uses preserved ten closures');
+});
+
+test('an unreadable lesson log retains the old dispatch conditions', () => {
+  const f = fixture();
+  for (let i = 0; i < 9; i++) f.complete();
+  const bench = new Bench(f.path, f.now, undefined, groupId, undefined, join(f.dir, 'missing-log'));
+  assert.equal(bench.dispatchTidy(groupId, to, 'lead-room'), undefined);
+  const task = bench.send({ groupId, from, to, body: 'tenth' }); bench.done(task.id, to.sessionId);
+  assert.ok(bench.dispatchTidy(groupId, to, 'lead-room'));
+});
+
+test('new experience alone permits tidy, while its own events do not create a loop', () => {
+  const f = fixture();
+  const lessons = join(f.dir, 'lessons.jsonl'), experience = join(f.dir, 'experience.jsonl');
+  writeFileSync(lessons, '');
+  const store = new BenchExperience(experience, groupId, () => {}, () => new Date(f.now()).toISOString());
+  const open = () => new Bench(f.path, f.now, changes => store.record(changes), groupId, undefined, lessons, experience);
+  let bench = open();
+  for (let i = 0; i < 10; i++) { const task = bench.send({ groupId, from, to, body: 'work' }); bench.done(task.id, to.sessionId); }
+  const tidy = bench.dispatchTidy(groupId, to, 'lead-room')!;
+  assert.ok(tidy); assert.match(tidy.body, /summarizeExperience/); assert.match(tidy.body, /Bridge 問題/);
+  bench.done(tidy.id, to.sessionId);
+  f.advance(7 * day);
+  bench = open();
+  assert.equal(bench.dispatchTidy(groupId, to, 'lead-room'), undefined, 'only the tidy own opening and completion are new');
+  bench.send({ groupId, from, to, body: 'new operational event' });
+  assert.ok(bench.dispatchTidy(groupId, to, 'lead-room'), 'fresh experience satisfies seven-day branch without a new lesson');
+});
+
+test('friction alone starts the seven-day review clock', () => {
+  const f = fixture();
+  const log = join(f.dir, 'lessons.jsonl');
+  writeFileSync(log, JSON.stringify({ action: 'friction', role: 'bridge', problem: 'fixture' }) + '\n');
+  const open = () => new Bench(f.path, f.now, undefined, groupId, undefined, log);
+  assert.equal(open().dispatchTidy(groupId, to, 'lead-room'), undefined);
+  f.advance(7 * day);
+  assert.ok(open().dispatchTidy(groupId, to, 'lead-room'));
 });
 
 test('seven days needs fresh material; prune, expiry and late completion do not lose or duplicate eligibility', () => {
@@ -274,8 +332,8 @@ test('a failed pending-lesson registration is retryable without starting the clo
 });
 
 
-test('malformed Tidy timestamps disable automation without blocking ordinary workbench saves', () => {
-  for (const damaged of [{ firstAt: { toString: 0, valueOf: 0 } }, { lastDispatchAt: 0 }]) {
+test('malformed Tidy state disables automation without blocking ordinary workbench saves', () => {
+  for (const damaged of [{ firstAt: { toString: 0, valueOf: 0 } }, { lastDispatchAt: 0 }, { lessonCursor: 'bad' }, { experienceCursor: -1 }, { lastTidyTicketId: 0 }]) {
     const f = fixture();
     f.complete();
     const snapshot = JSON.parse(readFileSync(f.path, 'utf8'));

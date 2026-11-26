@@ -335,7 +335,7 @@ export class Groups {
     if (!direction || normalizeRoleDirection(direction) !== direction) return;
     const key = `${group.id}:${roomId}`;
     if (this.directionSent.get(key) === direction) return;
-    const header = '❤️ 你係今個群組嘅總指揮。你嘅崗位工作方向（Founder 設定，至下方 ❤️ 為止）：只影響觀點和重點，不改權限；與 Founder 指示衝突時，以 Founder 為準。';
+    const header = '❤️ 你係今個群組嘅總指揮 ♛。你嘅崗位工作方向（Founder 設定，至下方 ❤️ 為止）：只影響觀點和重點，不改權限；與 Founder 指示衝突時，以 Founder 為準。';
     const text = `${header}\n${direction.split('\n').map(line => `｜ ${line}`).join('\n')}\n❤️`;
     return { text, sent: () => this.directionSent.set(key, direction) };
   }
@@ -366,11 +366,12 @@ export class Groups {
     const dispatch = `派單：${tool} bench send '${recipient}' --group ${group.id} --from <你> …；完成用 bench done。`;
     const visitId = this.visitIds.get(groupId);
     const lead = group.orchestratorRoomId ? this.getRoom(group.orchestratorRoomId) : undefined;
-    const leadText = lead?.sessionId ? `　總指揮：${lead.roomName}（${lead.sessionId}）` : '';
+    const leadText = lead?.sessionId ? `　總指揮 ♛：${lead.roomName}（${lead.sessionId}）` : '';
+    const selfLead = group.orchestratorRoomId === roomId ? '　你就係總指揮 ♛：按任務等級讀 lead skill（一般或冇寫等級都可以派單）。' : '';
     const boardText = this.boardEnabled && group.boardPath ? `　告示版：${group.boardPath}。開工前讀一次。檔案頂部嘅 Rev 有更新，就重讀。` : '';
     this.reservedRosters.add(groupId);
     return {
-      suffix: ` ===== ${groupRosterPrefix}${parts.join('；')}${leadText}　${dispatch}${boardText}`,
+      suffix: ` ===== ${groupRosterPrefix}${parts.join('；')}${leadText}${selfLead}　${dispatch}${boardText}`,
       finish: sent => {
         if (this.visitIds.get(groupId) !== visitId) return;
         this.reservedRosters.delete(groupId);

@@ -8,6 +8,7 @@ import { AvatarExpression } from './AvatarExpression';
 import { burstPetals } from '../utils/petals';
 import { roleAccent } from '../utils/roleAccent';
 import { memberRoleLabel } from './GroupMemberRoleEditor';
+import { groupRoleIcons } from './groupRoleIcons';
 import { isRoomPinned } from './RoomPin';
 
 
@@ -60,7 +61,7 @@ function Hearts({ roomId, flows, modelOf }: { roomId: string; flows: BenchFlow[]
   })}</>;
 }
 
-const ROLE_BADGE_TONE: Record<GroupRolePreset, { Icon: typeof Wrench; tone: string }> = {
+const ROLE_BADGE_TONE: Partial<Record<GroupRolePreset, { Icon: typeof Wrench; tone: string }>> = {
   debug: {
     Icon: Bug,
     tone: 'border-[#C98C8C] bg-[#FBE8E8] text-[#8A3434] dark:border-[#AA6666] dark:bg-[#3C2121] dark:text-[#F5B3B3]',
@@ -93,7 +94,8 @@ const ROLE_BADGE_TONE: Record<GroupRolePreset, { Icon: typeof Wrench; tone: stri
 
 export function RoleIconBadge({ role, assignment, leading = false, inline = false }: { role?: GroupMemberRole; assignment: string; leading?: boolean; inline?: boolean }) {
   if (!assignment || !role) return null;
-  const preset = role.key in ROLE_BADGE_TONE ? ROLE_BADGE_TONE[role.key as GroupRolePreset] : null;
+  const key = role.key as GroupRolePreset;
+  const preset = ROLE_BADGE_TONE[key] ?? (key in groupRoleIcons ? { Icon: groupRoleIcons[key], tone: 'border-[#C9AF89] bg-[#F7EFE2] text-[#6B5030] dark:border-[#9E8460] dark:bg-[#332A1E] dark:text-[#E7D1B0]' } : null);
   const placement = inline ? 'shrink-0' : `pointer-events-none absolute ${leading ? '-top-1 -right-1' : '-bottom-1 -right-1'} z-10`;
   if (preset) {
     const { Icon, tone } = preset;

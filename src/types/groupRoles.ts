@@ -1,6 +1,13 @@
 /** Wire/storage keys stay stable across interface languages. */
-export const groupRolePresets = ['implement', 'review', 'debug', 'art-copy', 'native-test', 'clerk', 'cybersecurity'] as const;
+export const groupRolePresets = ['implement', 'review', 'debug', 'art-copy', 'native-test', 'clerk', 'cybersecurity', 'fund-manager', 'economist', 'behavioural-analyst', 'quant-researcher', 'trading-strategist', 'risk-manager', 'trader', 'independent-auditor'] as const;
 export type GroupRolePreset = typeof groupRolePresets[number];
+export const groupRoleCategories = [
+  { key: 'engineering', roles: ['implement', 'review', 'debug', 'art-copy', 'native-test', 'clerk', 'cybersecurity'] },
+  { key: 'investment', roles: ['fund-manager', 'economist', 'behavioural-analyst', 'quant-researcher', 'trading-strategist', 'risk-manager', 'trader', 'independent-auditor'] },
+  { key: 'media', roles: [] },
+  { key: 'finance', roles: [] },
+  { key: 'general', roles: [] },
+] as const satisfies readonly { key: string; roles: readonly GroupRolePreset[] }[];
 export type GroupMemberRole = { key: string; label?: string; direction?: string };
 export const groupRoleDirectionMax = 300;
 export const groupRoleDirectionLines = 6;
@@ -67,6 +74,11 @@ export function savedGroupRole(value: unknown): GroupMemberRole | undefined {
   const direction = 'direction' in value ? normalizeRoleDirection(value.direction) : '';
   if (direction === undefined || ('direction' in value && direction !== value.direction)) return;
   if (isGroupRolePreset(value.key)) {
+    // An investment key may already exist as a custom role in an older group.
+    if (groupRoleCategories[1].roles.some(key => key === value.key) && 'label' in value && typeof value.label === 'string'
+      && roleName(value.label) === value.label && groupRoleKey(value.label) === value.key) {
+      return { key: value.key, label: value.label, ...(direction ? { direction } : {}) };
+    }
     // 'debug' used to be a custom role the Founder named himself (key debug, label Debug). It is a preset now, so that record is read as the preset.
     // 'cybersecurity' was a custom role too (key cybersecurity, label Cybersecurity) before it became a preset.
     if ('label' in value && !((value.key === 'debug' || value.key === 'cybersecurity') && typeof value.label === 'string' && value.label.toLowerCase() === value.key)) return;
