@@ -8,9 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit",
+    "lint": "tsc --noEmit && node --import tsx scripts/source-map.ts --check",
     "test": "node --import tsx --test bridge/*.test.ts",
-    "smoke": "node scripts/ui-smoke.mjs"
+    "smoke": "node scripts/ui-smoke.mjs",
+    "source-map": "node --import tsx scripts/source-map.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

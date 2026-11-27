@@ -859,7 +859,7 @@ export const ja: Partial<Record<I18nKey, string>> = {
   'notice.group.wakeLimit': 'CLI が 12 個起動しています。先に 1 部屋閉じてください。',
   'notice.group.leadSet': '「{group}」のリーダーを「{room}」に設定しました。',
   'notice.folder.changed': '既定の作業フォルダを {path} に変更しました。新しいルームはここから始まり、既存のルームはそのままです。',
-  'notice.attachment.expired': '{days} 日を超えたアップロード画像 {count} 枚をゴミ箱へ移動しました。',
+  'notice.attachment.expired': 'アップロードから {days} 日を超えた添付ファイル {count} 件をゴミ箱に移動しました。',
   'notice.history.limit': '上限（{count} 件）まで読み込みました。これ以前の履歴は CLI で /resume を実行してください。',
   'settings.theme.title': 'ギルドの外観',
   'settings.theme.auto.label': '時間帯で自動',

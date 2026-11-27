@@ -1,12 +1,23 @@
+// Contents
+// - Describe launch modes and terminal keys
+// - Route workbench tickets and record handoffs
+// - Describe file triggers and worktrees
+// - Receive requests from clients
+// - Send state and results to clients
+
 import type { GroupRoleChoice } from './groupRoles';
 import type { FileUpload } from '../utils/fileAttachments';
 import type { CharacterProfile, CLIModelId, GroupChat, TerminalRoom } from './guild';
 
+// Describe launch modes and terminal keys
+// The CLI and Bridge use these types for approval settings and named terminal inputs.
 /** Whether CLIs start without asking for approval: a default per CLI, and the choice made for individual rooms. */
 export type LaunchModes = { defaults: Record<CLIModelId, boolean>; rooms: Record<string, boolean> };
 
 export type MenuKey = 'up' | 'down' | 'left' | 'right' | 'shift-left' | 'shift-right' | 'enter' | 'escape' | 'tab' | 'ctrl-u';
 
+// Route workbench tickets and record handoffs
+// The receipt records how a room was selected, and the wake record pins that recipient.
 /** One `komorebi-room send` and how it ended (the message itself is never kept). code: 0 sent, 1 failed, 2 bad usage, 3 stopped by a rule. */
 export interface HandoffEntry { at: string; from?: string; to: string; code: number; ms: number; note: string }
 
@@ -23,6 +34,8 @@ export type BenchRoutingError = 'ROLE_UNKNOWN' | 'ROLE_GROUP_REQUIRED' | 'ROLE_G
 /** Separate from legacy ping so an old CLI cannot accidentally follow a successor for a fixed ticket. */
 export type FixedBenchWake = { ticket: number; roomId: string; wakeId: string };
 
+// Describe file triggers and worktrees
+// These types give the group and repo panels the data returned by the Bridge.
 export type FileTriggerStatus = 'disabled' | 'monitoring' | 'waiting-leader' | 'waiting' | 'offline' | 'gap' | 'error';
 export type FileTriggerItem = { id: string; path: string; kind: 'file' | 'directory'; enabled: boolean; status: FileTriggerStatus; offlineToken?: string };
 
@@ -42,10 +55,13 @@ export interface RepoWorktrees {
 
 export type WorktreeDiffMode = 'branch' | 'work' | 'commit';
 
+// Receive requests from clients
+// Each request identifies the action and includes the inputs the Bridge needs.
 export type ClientEvent =
   | { type: 'AUTH'; key: string }
   | { type: 'BRIDGE_RESTART' }
   | { type: 'VIEW_ROOM'; roomId: string | null; open?: boolean }
+  | { type: 'DRAFT_ROOMS'; roomIds: string[] }
   | { type: 'VIEW_GROUP'; groupId: string; selectedRoomId?: string; wakeSelected?: true }
   | { type: 'GROUP_CREATE'; name: string; modelIds: CLIModelId[]; existingRoomIds?: string[] }
   | { type: 'GROUP_ADD'; groupId: string; modelId: CLIModelId }
@@ -120,8 +136,10 @@ export type ClientEvent =
   | { type: 'PUSH_TEST' }
   | { type: 'TRANSCRIBE'; requestId: string; mime: string; data: string; language?: 'zh' | 'yue' | 'en' | 'ja' | 'auto'; style?: 'colloquial' | 'written' };
 
+// Send state and results to clients
+// The initial snapshot advertises capabilities. Later events report updates and request results.
 export type ServerEvent =
-  | { type: 'SNAPSHOT'; readMarksSupported?: boolean; autoCompactSupported?: true; autoCompactAll?: boolean; restartSupported?: boolean; restartInstanceId?: string; rooms: TerminalRoom[]; characters: Record<CLIModelId, CharacterProfile>; tailscaleUrl: string | null; archivedKeys: string[]; pinSupported?: true; pinnedKeys?: string[]; protectedKeys?: string[]; renameSupported: true; deleteArchivedSupported?: true; idleCloseSupported?: true; workspaceRoot?: string; defaultFolder?: string; fixedRoomDirectorySupported?: true; agyAutoSupported?: true; roomLaunchOptionsSupported?: true; roomPresenceSupported?: true; roomViewStartSupported?: true; attachmentSupported?: true; fileUploadSupported?: true; terminalKeySupported?: true; questionAnswerSupported?: true; imagePreviewSupported?: true; videoSupported?: true; worktreeSupported?: true; historyPagingSupported?: true; pushPublicKey?: string; launchModes?: LaunchModes; launchModesSupported?: true; transcribeSupported?: boolean; groups?: GroupChat[]; groupBoardSupported?: true; inboxSupported?: true; groupMemberRolesSupported?: true; roleDirectionSupported?: true; fileTriggersSupported?: true; roleRoutingSupported?: true; groupMemberRolesNeedRepair?: true; successors?: Record<string, string> }
+  | { type: 'SNAPSHOT'; readMarksSupported?: boolean; autoCompactSupported?: true; autoCompactAll?: boolean; restartSupported?: boolean; restartInstanceId?: string; rooms: TerminalRoom[]; characters: Record<CLIModelId, CharacterProfile>; tailscaleUrl: string | null; archivedKeys: string[]; pinSupported?: true; pinnedKeys?: string[]; protectedKeys?: string[]; renameSupported: true; deleteArchivedSupported?: true; idleCloseSupported?: true; workspaceRoot?: string; defaultFolder?: string; fixedRoomDirectorySupported?: true; agyAutoSupported?: true; roomLaunchOptionsSupported?: true; roomPresenceSupported?: true; roomDraftsSupported?: true; roomViewStartSupported?: true; attachmentSupported?: true; fileUploadSupported?: true; terminalKeySupported?: true; questionAnswerSupported?: true; imagePreviewSupported?: true; videoSupported?: true; worktreeSupported?: true; historyPagingSupported?: true; pushPublicKey?: string; launchModes?: LaunchModes; launchModesSupported?: true; transcribeSupported?: boolean; groups?: GroupChat[]; groupBoardSupported?: true; inboxSupported?: true; groupMemberRolesSupported?: true; roleDirectionSupported?: true; fileTriggersSupported?: true; roleRoutingSupported?: true; groupMemberRolesNeedRepair?: true; successors?: Record<string, string> }
   | { type: 'BRIDGE_RESTART_NOTICE' }
   | { type: 'BRIDGE_RESTART_RESULT'; ok: true }
   | { type: 'BRIDGE_RESTART_RESULT'; ok: false; code: 'unsupported' | 'busy' | 'cooldown' | 'failed' }
@@ -161,7 +179,7 @@ export type ServerEvent =
   | { type: 'ATTENTION'; roomId: string; message: string }
   | { type: 'TRANSCRIBE_RESULT'; requestId: string; ok: boolean; text?: string; message?: string }
   | { type: 'ACTION_RESULT'; requestId: string; ok: boolean; message: string }
-  /** A ticket went from one room to another: the group view lets a heart fly. */
+  /** Ticket dispatch and completion events drive the group avatar overlays. */
   | { type: 'BENCH_FLOW'; fromRoomId: string; toRoomId: string; kind: 'task' | 'done'; ticket: number }
   | { type: 'HANDOFF_LOG_RESULT'; requestId: string; entries: HandoffEntry[] }
   | { type: 'BENCH_RESULT'; requestId: string; ok: boolean; stop?: boolean; errorCode?: BenchRoutingError; route?: RoleRouteReceipt; wake?: FixedBenchWake; lines: string[]; ping?: { to: string; from: string; text: string; ticket: number } }

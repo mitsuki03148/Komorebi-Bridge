@@ -23,7 +23,8 @@ test('an AGY room is launched with its own model, so the CLI default is not what
   assert.deepEqual(args.slice(args.indexOf('--model'), args.indexOf('--model') + 2), ['--model', 'gemini-4-argon-high']);
 });
 
-test('refresh publishes a newly available AGY model and keeps the last catalog on failure', async () => {
+test('refresh publishes a newly available AGY model and keeps the last catalog on failure', async t => {
+  const log = t.mock.method(console, 'error', () => {});
   const dir = await mkdtemp(join(tmpdir(), 'agy-catalog-'));
   const cwd = process.cwd();
   process.chdir(dir);
@@ -48,11 +49,14 @@ test('refresh publishes a newly available AGY model and keeps the last catalog o
     assert.equal(event.type, 'SYNC_UPDATE');
     assert.deepEqual(event.character?.availableSubModels, [...models, ...carbon.map(line => line.split('\t')[0])]);
 
-    for (const read of [fetchModels, async () => '', async () => { throw new Error('offline'); }]) {
+    const missing = async () => { throw Object.assign(new Error('missing CLI'), { code: 'ENOENT' }); };
+    const denied = async () => { throw Object.assign(new Error('command failed'), { code: 1, stderr: 'private CLI output' }); };
+    for (const read of [fetchModels, async () => '', missing, denied, denied]) {
       (rooms as any).nextAgyModelCheck = 0;
       await refresh(read);
       assert.equal(events.length, 1, 'only a fresh, different catalog is published');
     }
+    assert.deepEqual(log.mock.calls.map(call => call.arguments), [['無法刷新 AGY 模型目錄', 1]]);
     assert.ok(rooms.characters.AGY.availableSubModels.includes('gemini-4-carbon-high'));
     await rooms.close();
   } finally { process.chdir(cwd); await rm(dir, { recursive: true, force: true }); }

@@ -1,3 +1,24 @@
+// Contents
+// Runtime state — See LiveRoom, the fields at the start of Rooms, and timing fields beside their methods.
+// Input diagnostics — Record input timing and outcomes without saving message or screen text.
+// Prompt policy — Tell a room on its first eligible prompt that it is working alone.
+// Attachment request validation — Accept older image requests and enforce the current file and image limits.
+// Usage and model catalogue — Refresh quota readings, daily history and the models shown in pickers.
+// Room records — Create room records and keep their recent conversation.
+// CLI launch arguments — Build each CLI's flags for room settings, session state and workbench hooks.
+// Group wake — Check whether a group room can open and prevent duplicate live sessions.
+// Room model settings — Track each room's model, effort and speed and apply saved choices when it opens.
+// Room identity and storage — Link rooms to native sessions and preserve room settings across restarts.
+// Transcript watching — Watch native session files and update room history as they change.
+// Room lifecycle — Start, resume, fork and close room terminals while keeping their session links.
+// Screen refresh — Read terminal output and update room readiness, menus and pending cards.
+// Answer terminal cards — Send question answers and approval decisions through the terminal.
+// Send input — Prepare attachments, send or defer input and verify what reached the terminal.
+// Remote Control — Read room connection state and manage the Mac's Codex Remote Control setting.
+// Archive idle rooms — List idle rooms and recheck the selection before archiving.
+// Delete archived rooms — Check transcript ownership before removing rooms and moving eligible files to the Trash.
+// Handle client requests — Check incoming room events and dispatch them against the current room and terminal state.
+
 import { execFile } from 'node:child_process';
 import { LaunchModeStore } from './launch-modes';
 import { AutoCompactRooms, autoCompactArgs, autoCompactTarget, supportsAutoCompact } from './auto-compact';
@@ -43,6 +64,8 @@ const keyCodes: Record<MenuKey, string> = {
 /** A screen flagged "updating" for this long, with no key sent and no output, is not updating: it is read again before a button is refused. */
 const staleScreenMs = 1_500;
 
+// Runtime state
+// Keep track of the live terminal, pending input and lifecycle callbacks.
 interface LiveRoom {
   /** When the Bridge last sent a key to this CLI. */
   keyAt?: number;
@@ -88,10 +111,14 @@ interface LiveRoom {
 
 type ActionResult = (ok: boolean, message: string) => void;
 
+// Input diagnostics
+// Record input timing and outcomes without saving message or screen text.
 type InputWaitBranch = 'quiet' | 'typed-prefix' | 'patience' | 'max-wait';
 type InputFailure = 'roster-unavailable' | 'bracketed-paste-disabled' | 'paste-write-failed' | 'state-changed' |
   'enter-write-failed' | 'max-wait' | 'submission-cancelled' | 'still-typed' | 'idle-wake-rejected' | 'idle-wake-error' |
   'unread-retry-rejected' | 'unread-retry-error' | 'stall-nudge-rejected' | 'stall-nudge-error' | 'cleanup-unconfirmed';
+type InputTrace = ReturnType<typeof beginInputTrace>;
+
 const inputLogLimit = 2 * 1024 * 1024;
 
 export function beginInputTrace(path: string, room: TerminalRoom, text: string, source: 'submit' | 'idle-wake' | 'unread-retry' | 'stall-nudge', requestId = randomBytes(4).toString('hex')) {
@@ -128,8 +155,9 @@ export function beginInputTrace(path: string, room: TerminalRoom, text: string, 
     },
   };
 }
-type InputTrace = ReturnType<typeof beginInputTrace>;
 
+// Prompt policy
+// Tell a room on its first eligible prompt that it is working alone.
 /** Added to the first prompt of a room that is on its own, so its agent works alone instead of handing work to other rooms. It starts like the group roster so the conversation record still matches what was sent. */
 export const singleRoomNote = ' ===== 呢間係單人房，冇其他成員。自己完成任務，唔好用工作台或 `komorebi-room send` 派工畀其他房。要協作，等 Founder 指明。';
 
@@ -159,6 +187,9 @@ function pasteInProgress(live: LiveRoom) {
 
 const cols = 112;
 const rows = 42;
+
+// Attachment request validation
+// Accept older image requests and enforce the current file and image limits.
 /** The images sent with a message: the new list, or the single image older clients send. At most four. */
 export const maxImages = maxAttachments;
 function imagesOf(event: { attachment?: unknown; attachments?: unknown }): unknown[] {
@@ -184,6 +215,9 @@ const sessionUuid = '[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}';
 const codexSessionLine = new RegExp(`^\\s*[│║]?\\s*Session:\\s+(${sessionUuid})(?:\\s*[│║])?\\s*$`, 'im');
 const validSessionId = new RegExp(`^${sessionUuid}$`, 'i');
 const maxLiveCli = 12;
+
+// Usage and model catalogue
+// Set the refresh intervals and read the model options that Codex exposes to the picker.
 /** How often the HP and MP readings, and Codex's model list, are taken again. */
 const usageRefreshMs = 60_000;
 const agyModelRefreshMs = 5 * 60_000;
@@ -231,6 +265,8 @@ async function agyLogSession(file: string) {
   }
 }
 
+// Room records
+// Create room records and keep their recent conversation.
 function newRoom(modelId: CLIModelId, roomName: string, cwd: string, id = randomUUID() as string): TerminalRoom {
   return {
     id, modelId, roomName, repoPath: cwd, gitBranch: '—', selectedSubModel: '—',
@@ -252,8 +288,24 @@ function hasConversation(room: TerminalRoom) {
   return room.logs.some(entry => entry.sender === 'user' || entry.sender === 'agent');
 }
 
+// CLI launch arguments
+// Build each CLI's flags for room settings, session state and workbench hooks.
 /** Where the workbench hook script is, when a room should get it (group rooms only). */
 export interface BenchLaunch { hook: string }
+
+export function claudeModelFlag(name: string | undefined) {
+  const text = (name ?? '').trim();
+  if (/^claude-[a-z0-9.-]+$/i.test(text)) return text.toLowerCase();
+  const match = /^(?:Claude )?(Sonnet|Opus|Haiku|Fable|Mythos) (\d+)(?:\.(\d+))?$/i.exec(text);
+  return match ? `claude-${match[1].toLowerCase()}-${match[2]}${match[3] !== undefined ? `-${match[3]}` : ''}` : undefined;
+}
+/** What `claude --model` takes from the picker or a typed `/model`: a full id, or a family name the CLI resolves to its newest model. */
+export function claudeModelArgument(value: string | undefined) {
+  const text = (value ?? '').trim().toLowerCase();
+  return /^(?:claude-[a-z0-9.-]+|opus|sonnet|haiku|fable|mythos)$/.test(text) ? text : undefined;
+}
+/** The effort levels `claude --effort` takes (a room can also show "ultra", which it does not). */
+export const claudeEffortFlag = (effort: string | null | undefined) => effort && /^(low|medium|high|xhigh|max)$/.test(effort) ? effort : undefined;
 
 /**
  * The workbench hook for Codex and Claude: after each tool and when a prompt arrives, the CLI asks the Bridge for new
@@ -277,21 +329,6 @@ function benchHookArgs(modelId: CLIModelId, bench: BenchLaunch | undefined): str
   }
   return []; // AGY takes hooks only from a plugin (see scripts/komorebi-bench-plugin.sh), not from launch options.
 }
-
-/** "Sonnet 5.5" or "Claude Opus 5.5" as the id the CLI takes with --model; anything else is left to the CLI's own default. */
-export function claudeModelFlag(name: string | undefined) {
-  const text = (name ?? '').trim();
-  if (/^claude-[a-z0-9.-]+$/i.test(text)) return text.toLowerCase();
-  const match = /^(?:Claude )?(Sonnet|Opus|Haiku|Fable|Mythos) (\d+)(?:\.(\d+))?$/i.exec(text);
-  return match ? `claude-${match[1].toLowerCase()}-${match[2]}${match[3] !== undefined ? `-${match[3]}` : ''}` : undefined;
-}
-/** What `claude --model` takes from the picker or a typed `/model`: a full id, or a family name the CLI resolves to its newest model. */
-export function claudeModelArgument(value: string | undefined) {
-  const text = (value ?? '').trim().toLowerCase();
-  return /^(?:claude-[a-z0-9.-]+|opus|sonnet|haiku|fable|mythos)$/.test(text) ? text : undefined;
-}
-/** The effort levels `claude --effort` takes (a room can also show "ultra", which it does not). */
-export const claudeEffortFlag = (effort: string | null | undefined) => effort && /^(low|medium|high|xhigh|max)$/.test(effort) ? effort : undefined;
 
 export function cliLaunch(room: TerminalRoom, remote: boolean, agyAuto = false, fullAccess = false, bench?: BenchLaunch, agyModel?: string, codexFast?: boolean, claudeChoice?: { model?: string; effort?: string }, forkFromSession?: string, compactArgs: string[] = []): [string, string[]] {
   const resume = room.sessionId;
@@ -411,6 +448,7 @@ export class Rooms {
   private deletedKeys = new Set<string>();
   private deletedReadable = true;
   private readonly notices = new Set<string>();
+  private readonly loggedBackgroundFailures = new Set<string>();
   private codexRemoteChange = false;
   private codexRemoteStatus: TerminalRoom['remoteStatus'] = 'unknown';
   private stopWatching: ReturnType<typeof watchSessions> | undefined;
@@ -420,6 +458,8 @@ export class Rooms {
   private usageRunning = false;
   private nextAgyModelCheck = 0;
 
+  // Group wake
+  // Check whether a group room can open and prevent duplicate live sessions.
   async ensureGroupMember(modelId: CLIModelId, roomName: string, roomId: string = randomUUID()) {
     if (this.deletedKeys.has(roomId)) throw new Error('這間房已移除，不會自動重建。');
     const existing = this.rooms.get(roomId);
@@ -622,7 +662,13 @@ export class Rooms {
     const live = this.live.get(roomId);
     if (!room || !live || live.closing) return false;
     return Boolean(!room.ready || room.status !== 'idle' || room.pendingApproval || room.pendingQuestion ||
-      room.menu || live.submitted || live.deferredInput || live.attaching || live.preparingAttachments || live.dirty || live.queued);
+      room.menu || room.backgroundTasks || this.hasTerminalDraft(room) || live.submitted || live.deferredInput ||
+      live.attaching || live.preparingAttachments || live.dirty || live.queued);
+  }
+
+  private hasTerminalDraft(room: TerminalRoom) {
+    const draft = composerText(room.modelId, room.screen ?? '');
+    return Boolean(draft && !(room.modelId === 'CODEX' && draft === 'Ask Codex to do anything'));
   }
 
   ptyGuard(roomId: string) {
@@ -642,19 +688,25 @@ export class Rooms {
     return Boolean(room && (this.hasOpenTickets?.(room) || this.hasDeliveryHold?.(room)));
   }
 
-  closeUnviewed(roomId: string) {
+  closeUnviewed(roomId: string, reason: 'unviewed' | 'group-idle' = 'unviewed') {
     if (this.starting.has(roomId)) return false;
     const room = this.rooms.get(roomId);
     const live = this.live.get(roomId);
     if (!room || !live || live.closing) return true;
-    if (this.isWorking(roomId) || this.hasDeliveryHold?.(room) ||
-        (this.retainedRooms.has(roomId) && this.hasOpenTickets?.(room))) return false;
+    if (this.isWorking(roomId) || this.deliveryPending(roomId)) return false;
     const emptyRoom = !room.sessionId && !live.discoveredSessionId && !hasConversation(room);
     if (!emptyRoom && !this.canJoinExistingGroup(room)) {
       this.emit({ type: 'NOTICE', message: `${room.roomName} 未確認可以續接，CLI 暫時保持開啟。` });
       return true;
     }
-    try { this.closeTerminal(room, live, true); }
+    const before = { status: room.status, ready: room.ready, backgroundTasks: room.backgroundTasks ?? 0,
+      dirty: Boolean(live.dirty), queued: live.queued ?? 0, terminalDraft: this.hasTerminalDraft(room),
+      lastOutputAt: live.lastOutputAt, lastInputAt: live.keyAt };
+    try {
+      this.closeTerminal(room, live, true);
+      console.info('自動關房 ' + JSON.stringify({ at: new Date().toISOString(), roomId, roomName: room.roomName,
+        sessionId: room.sessionId ?? live.discoveredSessionId ?? null, modelId: room.modelId, reason, before }));
+    }
     catch { this.emit({ type: 'NOTICE', message: `${room.roomName} 未能自動結束 CLI。` }); }
     return true;
   }
@@ -678,6 +730,8 @@ export class Rooms {
     this.emit({ type: 'ROOM', room });
   }
 
+  // Room model settings
+  // Track each room's model, effort and speed and apply saved choices when it opens.
   /** The model id AGY takes for a name seen on screen ("Gemini 4 Hydrogen") and an effort, if it is one it lists. */
   private agyModelId(name: string, effort: string) {
     const flat = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -891,6 +945,8 @@ export class Rooms {
 
   inputLogPath?: string;
 
+  // Room identity and storage
+  // Link rooms to native sessions and preserve room settings across restarts.
   constructor(private readonly workspace: string, private readonly emit: (event: ServerEvent) => void,
     private readonly saveImage: typeof saveAttachment = saveAttachment,
     private readonly modes = new LaunchModeStore(join(workspace, '.komorebi-launch-modes.json')),
@@ -1098,7 +1154,8 @@ export class Rooms {
     }
   }
 
-
+  // Refresh usage and model catalogues
+  // Update characters with quota readings, daily history and the latest picker options.
   private async refreshUsage() {
     if (this.closed || this.usageRunning) return;
     this.usageRunning = true;
@@ -1162,6 +1219,17 @@ export class Rooms {
     }
   }
 
+  private reportBackgroundFailure(operation: string, error: unknown) {
+    const failure = error as { code?: string | number; signal?: string; name?: string } | undefined;
+    if (failure?.code === 'ENOENT') return;
+    // Child errors can carry raw CLI output. Keep only the status and log each reason once.
+    const reason = failure?.signal ?? failure?.code ?? failure?.name ?? 'unknown';
+    const key = `${operation}: ${reason}`;
+    if (this.loggedBackgroundFailures.has(key)) return;
+    this.loggedBackgroundFailures.add(key);
+    console.error(operation, reason);
+  }
+
   /** Codex rewrites its model cache when a new model comes out; read it again so the picker does not wait for a Bridge restart. */
   private async refreshCodexModels() {
     if (this.closed) return;
@@ -1171,7 +1239,10 @@ export class Rooms {
       if (JSON.stringify([character.availableSubModels, character.modelOptions]) === JSON.stringify([next.availableSubModels, next.modelOptions])) return;
       Object.assign(character, next);
       this.emit({ type: 'SYNC_UPDATE', character });
-    } catch { /* No cache yet, or a half-written file: the next round reads it again. */ }
+    } catch (error) {
+      // A first write may be incomplete. Leave the current list in place for the next refresh.
+      if (!(error instanceof SyntaxError)) this.reportBackgroundFailure('無法刷新 Codex 模型目錄', error);
+    }
   }
 
   /** Entitlements can change while the Bridge is running. Keep the last valid AGY list on failure. */
@@ -1186,9 +1257,11 @@ export class Rooms {
       if (this.closed || !next.length || next.join('\n') === character.availableSubModels.join('\n')) return;
       character.availableSubModels = next;
       this.emit({ type: 'SYNC_UPDATE', character });
-    } catch { /* The next refresh can try again. */ }
+    } catch (error) { this.reportBackgroundFailure('無法刷新 AGY 模型目錄', error); }
   }
 
+  // Transcript watching
+  // Watch native session files and update room history as they change.
   async watch() {
     if (this.closed) return;
     void this.refreshUsage();
@@ -1235,6 +1308,8 @@ export class Rooms {
         return sessionId ? [sessionId] : [];
       }),
     );
+
+    // Load the initial picker options after starting the session watcher.
     const [codex, claude] = await Promise.allSettled([
       readFile(join(process.env.CODEX_HOME || join(home, '.codex'), 'models_cache.json'), 'utf8'),
       run('claude', ['-p', '/model', '--output-format', 'json', '--no-session-persistence'], { timeout: 10_000, maxBuffer: 128_000 }),
@@ -1388,7 +1463,7 @@ export class Rooms {
         (session.cwd === room.repoPath || session.cwd === live.resolvedCwd)));
       if (matches.length !== 1 || !matches[0] || this.live.get(room.id) !== live || room.sessionId) return;
       const session = matches[0];
-      // The process owns this file, so this also disambiguates simultaneous forks of the same parent.
+      // The process has this file open, so this also disambiguates simultaneous forks of the same parent.
       this.bindSession(room, session.id);
       if (room.sessionId !== session.id) return;
       this.sync(session);
@@ -1519,6 +1594,8 @@ export class Rooms {
     }
   }
 
+  // Room lifecycle
+  // Start, resume, fork and close room terminals while keeping their session links.
   private startExisting(room: TerminalRoom, stillWanted?: () => boolean, remote = false) {
     if (!room.repoPath || (room.sessionId && !room.resumable)) throw new Error('這間房未有可續接的工作階段，請先確認原有 Session。');
     if (!room.live && !room.sessionId && hasConversation(room)) {
@@ -1575,7 +1652,10 @@ export class Rooms {
       let compactSupported = false;
       if (compact.length || (enabled && room.modelId === 'AGY')) {
         const probe = room.modelId === 'CLAUDE' ? ['claude', '--help'] : [room.modelId.toLowerCase(), '--version'];
-        const { stdout } = await run(probe[0], probe.slice(1), { cwd, env, timeout: 2_000 }).catch(() => ({ stdout: '' }));
+        const { stdout } = await run(probe[0], probe.slice(1), { cwd, env, timeout: 2_000 }).catch(error => {
+          this.reportBackgroundFailure(`無法檢查 ${room.modelId} Auto Compact 支援`, error);
+          return { stdout: '' };
+        });
         compactSupported = supportsAutoCompact(room.modelId, stdout);
       }
       if (this.closed || stillWanted?.() === false) return;
@@ -1583,7 +1663,9 @@ export class Rooms {
         agyLogDirectory = await mkdtemp(join(tmpdir(), 'komorebi-agy-session-'));
       }
       if (this.closed || stillWanted?.() === false) {
-        if (agyLogDirectory) await rm(agyLogDirectory, { recursive: true, force: true }).catch(() => {});
+        if (agyLogDirectory) await rm(agyLogDirectory, { recursive: true, force: true }).catch(error => {
+          this.reportBackgroundFailure('無法清理 AGY 臨時 log 目錄', error);
+        });
         return;
       }
       // The preference may have changed while probing the CLI or preparing its session log.
@@ -1597,7 +1679,9 @@ export class Rooms {
       try { child = spawn(command, args, { name: 'xterm-256color', cols, rows, cwd, env }); }
       catch (error) {
         terminal.dispose();
-        if (agyLogDirectory) await rm(agyLogDirectory, { recursive: true, force: true }).catch(() => {});
+        if (agyLogDirectory) await rm(agyLogDirectory, { recursive: true, force: true }).catch(error => {
+          this.reportBackgroundFailure('無法清理 AGY 臨時 log 目錄', error);
+        });
         throw error;
       }
       const live: LiveRoom = {
@@ -1630,7 +1714,11 @@ export class Rooms {
           room.gitBranch = stdout.trim();
           this.emit({ type: 'ROOM', room });
         }
-      }).catch(() => {});
+      }).catch(error => {
+        // A room can start in a folder outside Git.
+        if (error?.code === 128 && /^fatal: not a git repository\b/.test(error.stderr ?? '')) return;
+        this.reportBackgroundFailure('無法讀取房間 Git 分支', error);
+      });
       child.onData(data => {
         live.lastOutputAt = Date.now();
         live.queued++;
@@ -1707,6 +1795,8 @@ export class Rooms {
     void discover();
   }
 
+  // Screen refresh
+  // Read terminal output and update room readiness, menus and pending cards.
   private refresh(room: TerminalRoom, live: LiveRoom, notifyIdle = true) {
     if (live.closing || live.queued) return;
     live.dirty = false;
@@ -1730,7 +1820,11 @@ export class Rooms {
     if (resuming && !live.resumeReported) { live.resumeReported = true; queueMicrotask(() => this.onResumePrompt?.(room)); }
     else if (!resuming) live.resumeReported = false;
 
-    const ready = !approval && !room.menu && !live.submitted && isComposer(room.modelId, screen) && !hasWorkingIndicator(screen);
+    // AGY keeps its composer visible during tools; the footer can be the only busy signal.
+    // Keep this out of generic menu detection, where the same hint means cancel a menu.
+    const working = hasWorkingIndicator(screen) || (room.modelId === 'AGY' &&
+      /^[ \t]*esc to cancel\b/im.test(screen.split('\n').slice(-9).join('\n')));
+    const ready = !approval && !room.menu && !live.submitted && isComposer(room.modelId, screen) && !working;
     if (room.modelId === 'CODEX' && ready && !room.sessionId && live.forkedFromSession && !live.forkRecoveryAttempted) {
       live.forkRecoveryAttempted = true;
       void this.recoverCodexFork(room, live);
@@ -1743,7 +1837,7 @@ export class Rooms {
           id: new Date().toISOString(),
           questions: [{ title: agyQ.title, options: opts.length ? opts : null, ...(agyQ.multiSelect ? { multiSelect: true } : {}) }],
         };
-      } else if (!agyQ && room.pendingQuestion && (ready || hasWorkingIndicator(screen))) {
+      } else if (!agyQ && room.pendingQuestion && (ready || working)) {
         room.pendingQuestion = undefined;
       }
     }
@@ -1766,7 +1860,7 @@ export class Rooms {
     if (changed) room.screenId = randomUUID();
     room.screenStyles = styles;
     const becameIdle = ready && !room.ready;
-    if (room.ready && !ready && hasWorkingIndicator(screen) && !approval && !room.menu) {
+    if (room.ready && !ready && working && !approval && !room.menu) {
       live.reportBaseline = lastAgentEntry(room) ?? null;
     }
     room.ready = ready;
@@ -1830,8 +1924,8 @@ export class Rooms {
   }
 
   /**
-   * Pastes a lone image path, which every supported CLI turns into a native attachment,
-   * and waits until its marker shows. The prompt text is then sent in the same turn.
+   * Pastes a lone image path and waits for the CLI's native attachment marker.
+   * The prompt text is then sent in the same turn.
    * Returns 'unsupported' when the screen cannot be read, so the caller falls back to a path in the text.
    */
   private async attachImage(room: TerminalRoom, live: LiveRoom, path: string): Promise<'attached' | 'unconfirmed' | 'unsupported'> {
@@ -1880,7 +1974,9 @@ export class Rooms {
   /** How long a message that steers a working CLI waits for the paste to show before Enter, when the CLI never goes quiet. */
   steerPatienceMs = 1_500;
 
-  /** Waits long enough between the keys that Codex has redrawn before the next one (shorter in tests). */
+  // Answer terminal cards
+  // Send question answers and approval decisions through the terminal.
+  /** Waits long enough between the keys that the CLI has redrawn before the next one (shorter in tests). */
   questionStepMs = 220;
 
   /**
@@ -2292,6 +2388,8 @@ export class Rooms {
     this.emit({ type: 'ROOM', room });
   }
 
+  // Send input
+  // Prepare attachments, send or defer input and verify what reached the terminal.
   /**
    * A message was pasted into the CLI's input box but not submitted (the room changed state in between).
    * Left there, the box never reads as empty, the room never reads as ready, and no wake-up reaches it again:
@@ -2544,8 +2642,8 @@ export class Rooms {
 
   /**
    * Enter writes nothing back when the CLI swallows it, so the room would stay "working" with a still terminal.
-   * Re-read the screen shortly after, which also clears that state. If the text is still in the input box the Enter
-   * was lost, so it is pressed once more; if it is still there after that, say so.
+   * Re-read the screen shortly after, which also clears that state. If the text is still in the input box,
+   * retry Enter once when recovery keys are allowed. Report text that remains after recovery.
    */
   private verifySubmission(room: TerminalRoom, live: LiveRoom, message: string, retried = false, queued = false, trace?: InputTrace, allowExtraKeys = true) {
     const timer = setTimeout(() => {
@@ -2587,6 +2685,8 @@ export class Rooms {
     timer.unref?.();
   }
 
+  // Remote Control
+  // Read room connection state and manage the Mac's Codex Remote Control setting.
   private updateRemote(room: TerminalRoom, screen: string) {
     const disabled = /Remote Control (?:is off|isn.t connected|disconnected|disabled|stopped|failed|ended)|Disconnected Remote Control|\/rc (?:failed|off)/i.test(screen);
     const enabled = /\/rc active|Remote Control (?:is (?:on|active|enabled)|connected|enabled|session (?:started|active))|Remote session (?:active|connected)/i.test(screen);
@@ -2626,12 +2726,15 @@ export class Rooms {
     }
   }
 
+  // Feed quota values from the terminal into the same history as background readings.
   private updateUsage(room: TerminalRoom, screen: string) {
     const { hp, mp, vouchers } = readUsage(room.modelId, screen, room.selectedSubModel);
     this.applyUsage(room.modelId, { fiveHour: hp, weekly: mp, vouchers });
   }
 
-  /** Why a room must stay open now, or null when it can be closed: its CLI is working, or it has unfinished tickets. */
+  // Archive idle rooms
+  // List idle rooms and recheck the selection before archiving.
+  /** Why an unarchived room is skipped, or null when it can be closed: its CLI is starting, working or closing, or it has unfinished tickets or a delivery hold. */
   private busyReason(room: TerminalRoom): 'busy' | 'tickets' | null {
     if (this.isWorking(room.id) || this.live.get(room.id)?.closing) return 'busy';
     if (this.deliveryPending(room.id)) return 'tickets';
@@ -2685,6 +2788,8 @@ export class Rooms {
     reply({ type: 'CLOSE_IDLE_RESULT', closed, skipped });
   }
 
+  // Delete archived rooms
+  // Check transcript ownership before removing rooms and moving eligible files to the Trash.
   private async archivedSessionFiles(removed: TerminalRoom[]) {
     const removedIds = new Set(removed.map(room => room.id));
     const otherRooms = [...this.rooms.values()].filter(room => !removedIds.has(room.id));
@@ -2745,6 +2850,8 @@ export class Rooms {
     return { files: [...files], shared: shared.size, failed: [...failed] };
   }
 
+  // Handle client requests
+  // Check incoming room events and dispatch them against the current room and terminal state.
   async handle(event: ClientEvent, reply: (event: ServerEvent) => void, options?: { reserveRoster?: ReserveRoster; stillWanted?: () => boolean; resumed?: boolean; inputTraceId?: string; authorizeBenchInput?: (phase: 'paste' | 'submit') => boolean }): Promise<unknown> {
     if (!event || typeof event !== 'object') throw new Error('無效請求。');
     if (event.type === 'IDLE_ROOMS' || event.type === 'CLOSE_IDLE') return this.idleRooms(event, reply);
@@ -3061,7 +3168,6 @@ export class Rooms {
         result(true, '已將選項送到 CLI');
         return;
       }
-      // A room on its own (not in a group) is told so with the first prompt of each run: nobody else is there to hand work to.
       const single = !options?.reserveRoster && !input.startsWith('/') && !/^[1-9]$/.test(input) && !input.startsWith('[交接｜') && !input.startsWith('[工作台') && live && !live.singleNoted && !this.retainedRooms.has(room.id);
       const reserveRoster: ReserveRoster | undefined = input.startsWith('/') ? undefined
         : options?.reserveRoster ?? (single ? () => ({ suffix: singleRoomNote, finish: (sent: boolean) => { if (sent && live) live.singleNoted = true; } }) : undefined);

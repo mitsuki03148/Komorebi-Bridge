@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs';
+import type { Ticket } from './bench';
 import type { GroupChat, TerminalRoom } from '../src/types/guild';
 import { finalResult } from '../src/utils/attentionDiff';
 
@@ -86,12 +87,28 @@ export class HandledReports {
   }
 }
 
+/** Manual clerk work uses the same persona/folder identity, even after it is completed. */
+export function manualPersonaNotice(report: PersonaReport, group: GroupChat, tickets: readonly Ticket[], room: (id: string) => TerminalRoom | undefined) {
+  if (!report.folder) return;
+  const folder = new RegExp(`(?:^|[\\s\\x60'"(<:：])${escape(report.folder)}(?:/HANDOFF\\.md)?/?(?=$|[\\s\\x60'">)\\]。，,;:：])`);
+  return tickets.find(ticket => {
+    if (ticket.kind !== 'task' || ticket.purpose || ticket.groupId !== group.id || ticket.cancelledAt || ticket.expiredAt || ticket.worktree?.state === 'failed') return false;
+    const outcome = finalResult(ticket.note ?? '');
+    if (outcome === 'STOP' || outcome === 'INCOMPLETE') return false;
+    const clerk = ticket.route?.roleKey === 'clerk' || group.members.some(member => member.role?.key === 'clerk' &&
+      (ticket.to.sessionId === member.roomId || ticket.to.sessionId === room(member.roomId)?.sessionId || ticket.fixed?.toRoomId === member.roomId));
+    return clerk && /\bnotify\b|通知/i.test(ticket.body) && folder.test(ticket.body);
+  });
+}
+
 export interface PersonaNoticeDeps {
   inboxRoot: string;
   /** Reports older than this (the Bridge's start) are ignored, so a restart never replays an old report. */
   since: number;
   groups(): GroupChat[];
   room(roomId: string): TerminalRoom | undefined;
+  /** Retained group tasks, including completed manual notifications. */
+  tickets(groupId: string): readonly Ticket[];
   handled: Pick<HandledReports, 'has' | 'add'>;
   /** Start a bounded, read-only Inbox inventory before the clerk is notified. */
   beforeNotice?: (report: PersonaReport) => void;
@@ -114,6 +131,12 @@ export function sendPersonaNotices(deps: PersonaNoticeDeps) {
     if (!report) continue;
     const identity = report.folder ? `persona:${JSON.stringify([report.persona, report.folder, report.status])}` : undefined;
     if (identity && deps.handled.has(identity)) { deps.handled.add(entry.id); continue; }
+    const manual = manualPersonaNotice(report, group, deps.tickets(group.id), deps.room);
+    if (manual) {
+      deps.handled.add(entry.id);
+      deps.tell(lead, `已有人手通知 #${manual.id}，Bridge 唔再重派。`);
+      continue;
+    }
     try { deps.beforeNotice?.(report); } catch { /* A scan must never block the notice. */ }
     deps.handled.add(entry.id);
     const ticket = personaTicket(report, deps.inboxRoot);

@@ -40,6 +40,7 @@ export function cleanupReasons(facts: CleanupFacts): CleanupReason[] {
 }
 
 export type WorktreeUsage = { ticketId: number; path: string; branch: string; bytes?: number; oversized: boolean; candidate: boolean; reasons: CleanupReason[] };
+export type WorktreeCapacity = { used: number; limit: number; remaining: number };
 
 /** A preliminary, read-only assessment; removal must repeat every check at confirmation time. */
 export async function inspectWorktrees(entries: BridgeCheckout[], factsFor: (entry: BridgeCheckout) => Pick<CleanupFacts, 'finished' | 'oldEnough' | 'running' | 'protected' | 'verified'>): Promise<WorktreeUsage[]> {
@@ -103,6 +104,18 @@ export class BridgeWorktrees {
   snapshot() { this.load(); return structuredClone(this.entries); }
   isReadable() { return this.readable; }
 
+  private usedSlots() {
+    return this.entries.filter(entry => entry.state === 'reserved' || existsSync(entry.path)).length;
+  }
+
+  /** A read-only snapshot. Creation still checks capacity under its lock. */
+  capacity(): WorktreeCapacity | undefined {
+    this.load();
+    if (!this.readable) return undefined;
+    const used = this.usedSlots();
+    return { used, limit: bridgeWorktreeLimit, remaining: Math.max(0, bridgeWorktreeLimit - used) };
+  }
+
   private save(entries: BridgeCheckout[]) {
     if (!this.readable) throw new Error('無法讀取 worktree 記錄，已停止建立。');
     const temp = `${this.registry}.${randomUUID()}.tmp`;
@@ -131,8 +144,8 @@ export class BridgeWorktrees {
       // Recheck after the asynchronous probe: two callers may have arrived together.
       if (!this.readable) throw new Error('無法讀取 worktree 記錄，已停止建立。');
       if (this.entries.some(entry => entry.ticketId === ticketId)) throw new Error('工單已有 worktree 記錄。');
-      if (this.entries.filter(entry => entry.state === 'reserved' || existsSync(entry.path)).length >= bridgeWorktreeLimit) {
-        throw new Error(`Bridge worktree 已達上限 ${bridgeWorktreeLimit}，請先處理現有記錄。`);
+      if (this.usedSlots() >= bridgeWorktreeLimit) {
+        throw new Error(`Bridge worktree 已達上限 ${bridgeWorktreeLimit}，請先處理現有記錄。可先核實現有獨立 checkout、ref 同認領，再按需要用 --repo 派單；清理由 Founder 決定。`);
       }
       if (!/^[\p{L}\p{N} ._-]+$/u.test(name) || name === '.' || name === '..') throw new Error('repo 名稱不可用作 worktree 目錄。');
       mkdirSync(this.base, { recursive: true });

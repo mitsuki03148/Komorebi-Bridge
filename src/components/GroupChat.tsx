@@ -1,30 +1,27 @@
+// Contents
+// Create a group
+// Order messages across rooms
+// Read and respond in a group
+
 import { useT } from '../i18n/useLang';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApprovalDiff } from './ApprovalDiff';
-import { ArrowLeft, Minimize2, MoreHorizontal, TerminalSquare, Users, X } from 'lucide-react';
+import { ArrowLeft, MoreHorizontal, Users, X } from 'lucide-react';
 import { GUILD_HALL_BANNER, GUILD_HALL_NIGHT_BANNER } from '../data/initialGuildData';
 import { useTheme } from '../utils/theme';
-import { PermissionButton } from './PermissionButton';
 import { DaySeparator, MessageBubble } from './MessageBubble';
 import { ControlBar } from './ControlBar';
 import { benchWakeAsLine, bubbleRuns, isBenchDelivery } from '../utils/bubbleRuns';
 import { roleAccent } from '../utils/roleAccent';
 import type { CharacterProfile, CLIModelId, TerminalRoom } from '../types/guild';
-import { CopyTurnButton } from './CopyTurnButton';
 import { ComposerActionButton, GuildActionButton, ScrollToLatestButton } from './GuildActions';
 import { RejectReason } from './RejectReason';
 import { QuestionCard } from './QuestionCard';
-import { ModelEffortPicker } from './ModelEffortPicker';
 import { LiveTerminal } from './LiveTerminal';
 import { SlashCommandMenu } from './SlashCommandMenu';
 import { approvalChoiceLabel } from '../utils/approvalChoices';
 import { composerBlock, composerHint, groupPromptCanResume, useEscape } from '../utils/roomUi';
-
-/** The same rule the Bridge applies to a group name. */
-const groupNamePattern = /^[\p{L}\p{N}][\p{L}\p{N} _.()\-]{0,79}$/u;
 import { WorkingIndicator } from './WorkingIndicator';
-import { MessageImages } from './ImagePreviews';
-import { Markdown } from './Markdown';
 import { HistoryNote } from './HistoryNote';
 import { GroupBoardMenuItem } from './GroupBoardMenu';
 import { GroupMemberRoleAction, memberRoleLabel } from './GroupMemberRoleEditor';
@@ -35,6 +32,10 @@ import { WorktreeLayer } from './WorktreePanel';
 import type { GhCall } from './github/GitHubPanel';
 import { nearBottom, ownMessageJump, useStayAtBottom } from '../utils/scrollFollow';
 
+// Create a group
+// The creation form accepts both new CLI rooms and existing sessions.
+/** The same rule the Bridge applies to a group name. */
+const groupNamePattern = /^[\p{L}\p{N}][\p{L}\p{N} _.()\-]{0,79}$/u;
 const roles: CLIModelId[] = ['AGY', 'CODEX', 'CLAUDE'];
 
 export function GroupCreateModal({ characters, availableRooms = [], onCreate, onClose, busy = false, error }: {
@@ -110,8 +111,9 @@ export function GroupCreateModal({ characters, availableRooms = [], onCreate, on
   </div>;
 }
 
+// Order messages across rooms
+// Use dates to merge room histories and place undated entries near their neighbours in the same room.
 type GroupMember = { roomId: string; modelId: CLIModelId; role?: GroupMemberRole; room?: TerminalRoom };
-type Decision = string;
 
 function timeValue(timestamp: string) {
   const match = timestamp.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i);
@@ -145,7 +147,11 @@ export function orderGroupTimeline(members: GroupMember[]) {
   }).sort((a, b) => a.time - b.time || a.index - b.index);
 }
 
-export function GroupChatView({ worktreeCall, orchestratorRoomId, onSetOrchestrator, onEditMemberRole, name, boardPath, onChooseBoard, onFileTriggers, triggerBanner, members, characters, recipientId, availableRooms = [], drafts: sharedDrafts, onDraft, workingState, onLoadHistory, onBack, onSend, onCommand, onSelectRecipient, memberStrip, autoModeOf, onMode, onDecision, onInterrupt, onMenu, onManualKey, onAnswerDirect, onStart, onRetryMember, onOpenRoom, onAddMember, onAddExisting, onRemoveMember, attachmentPicker, voiceButton, attachmentPreview, hasAttachment, pendingRoomIds = [], error, errors, statuses }: {
+// Read and respond in a group
+// Show the shared conversation and route drafts, questions, and commands to the addressed room.
+type Decision = string;
+
+export function GroupChatView({ worktreeCall, orchestratorRoomId, onEditMemberRole, name, boardPath, onChooseBoard, onFileTriggers, triggerBanner, members, characters, recipientId, availableRooms = [], drafts: sharedDrafts, onDraft, workingState, onLoadHistory, onBack, onSend, onCommand, onSelectRecipient, memberStrip, autoModeOf, onMode, onDecision, onInterrupt, onMenu, onManualKey, onAnswerDirect, onStart, onRetryMember, onOpenRoom, onAddMember, onAddExisting, attachmentPicker, voiceButton, attachmentPreview, hasAttachment, pendingRoomIds = [], error, errors, statuses }: {
   /** Asks the Mac for a member room's folder (changes and files, read only); undefined when the Bridge cannot. */
   worktreeCall?: GhCall;
   name: string;
@@ -186,10 +192,8 @@ export function GroupChatView({ worktreeCall, orchestratorRoomId, onSetOrchestra
   memberStrip?: (controls: { onAdd?: () => void }) => ReactNode;
   onAddMember?: (modelId: CLIModelId) => void;
   onAddExisting?: (roomId: string) => void;
-  onRemoveMember?: (roomId: string) => void;
-  /** The member that leads the group now (where reports go when nobody says otherwise), and a way to name another. */
+  /** The member that leads the group now (where reports go when nobody says otherwise). */
   orchestratorRoomId?: string;
-  onSetOrchestrator?: (roomId: string) => void;
   onEditMemberRole?: (roomId: string) => void;
   attachmentPicker?: (roomId: string) => ReactNode;
   voiceButton?: (roomId: string) => ReactNode;
@@ -299,10 +303,10 @@ export function GroupChatView({ worktreeCall, orchestratorRoomId, onSetOrchestra
     {/* The same sunlit / starry night conservatory background as a single room. */}
     <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden" aria-hidden="true">
       <img src={isDark ? GUILD_HALL_NIGHT_BANNER : GUILD_HALL_BANNER} alt="" referrerPolicy="no-referrer" className="h-full w-full object-cover opacity-35 dark:opacity-45" />
-      <div className="absolute inset-0 bg-gradient-to-b from-[#FBF8F3]/85 via-[#FBF8F3]/70 to-[#FBF8F3]/90 dark:from-[#121624]/82 dark:via-[#151B2E]/64 dark:to-[#121624]/90" />
+      <div className="absolute inset-0 bg-gradient-to-b from-[#FBF8F3]/42 via-[#FBF8F3]/34 to-[#FBF8F3]/42 dark:from-[#121624]/48 dark:via-[#151B2E]/36 dark:to-[#121624]/48" />
     </div>
-    <div className="absolute top-0 inset-x-0 z-30 rounded-b-[24px] border-b border-[#E6DCD0]/70 bg-[#FBF8F3]/74 backdrop-blur-md shadow-[0_10px_28px_-14px_rgba(90,70,50,0.22)] dark:border-[#2E3654]/80 dark:bg-[#151B2E]/84 dark:shadow-[0_12px_30px_-12px_rgba(0,0,0,0.65)] sm:rounded-none sm:border-b-0 sm:bg-transparent sm:backdrop-blur-none sm:shadow-none">
-    <header className="relative z-30 flex shrink-0 items-center gap-2 border-b border-[#E6DCD0]/60 bg-[#FBF8F3]/62 backdrop-blur-md dark:border-[#6C7BA8]/25 dark:bg-[#101524]/50 dark:backdrop-blur-xl dark:backdrop-saturate-150 px-3 py-1.5 shadow-[0_6px_18px_-14px_rgba(90,70,50,0.22)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_8px_24px_-12px_rgba(0,0,0,0.65)] sm:px-5 sm:py-1.5">
+    <div className="pointer-events-none absolute top-0 inset-x-0 z-30">
+    <header className="pointer-events-auto relative z-30 flex shrink-0 items-center gap-2 bg-transparent px-3 py-1.5 sm:px-5 sm:py-1.5">
       {/* One line everywhere: back, name, who is addressed and how they are doing, then the options. */}
       <div className="contents">
         <button type="button" onClick={onBack} aria-label={t('group.leave')} title={t('group.leave')} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#6E5D52] dark:text-[#C5CDE3] transition-[transform,background-color] duration-150 ease-out hover:bg-[#E8DDD0]/50 dark:hover:bg-white/10 active:scale-[0.88] active:bg-[#DFD2C3]/70 dark:active:bg-white/15 cursor-pointer"><ArrowLeft size={18} /></button>
@@ -439,11 +443,9 @@ export function GroupChatView({ worktreeCall, orchestratorRoomId, onSetOrchestra
                 <circle cx="10" cy="10" r="2.1" fill="#FBE9A8" />
               </svg>
             </span>
-            {/* Middle: Active member's group role/assignment (or character name when unassigned) */}
             <span className="max-w-[7.5rem] truncate font-display text-[11px] font-bold tracking-wide sm:max-w-[14rem]">
               {roleLabel}
             </span>
-            {/* Right: Shoujo jewel dot showing CLI state (waiting / working / live / offline) */}
             {isWaiting ? (
               <span aria-hidden="true" className="relative flex h-2 w-2 shrink-0 items-center justify-center">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#D97706] opacity-75" />
@@ -467,13 +469,23 @@ export function GroupChatView({ worktreeCall, orchestratorRoomId, onSetOrchestra
     </header>
     {memberStrip?.({ onAdd: canAddMember ? () => { if (optionsRef.current) optionsRef.current.open = true; } : undefined })}
     </div>
+    {/* The timeline keeps workbench wake lines and omits the full delivery payloads. */}
     <div ref={timelineRef} onScroll={event => {
       const element = event.currentTarget;
       anchor.current.height = element.scrollHeight;
       following.current = nearBottom(element);
       setAwayFromLatest(!following.current);
       if (following.current) setNewMessages(false);
-    }} className={`relative z-10 min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pb-3 sm:px-5 sm:pb-5 ${memberStrip ? 'pt-[7.25rem]' : 'pt-[4.25rem]'}`} aria-label={t('group.conversation')}>
+    }}
+      style={{
+        WebkitMaskImage: memberStrip
+          ? 'linear-gradient(to bottom, transparent 0px, transparent 58px, black 116px, black 100%)'
+          : 'linear-gradient(to bottom, transparent 0px, transparent 34px, black 68px, black 100%)',
+        maskImage: memberStrip
+          ? 'linear-gradient(to bottom, transparent 0px, transparent 58px, black 116px, black 100%)'
+          : 'linear-gradient(to bottom, transparent 0px, transparent 34px, black 68px, black 100%)',
+      }}
+      className={`relative z-10 min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pb-3 sm:px-5 sm:pb-5 ${memberStrip ? 'pt-[7.25rem]' : 'pt-[4.25rem]'}`} aria-label={t('group.conversation')}>
       <HistoryNote truncated={members.some(member => member.room?.historyTruncated)} count={timeline.length}
         onLoadMore={onLoadHistory && (() => onLoadHistory(members.filter(member => member.room?.historyTruncated).map(member => member.roomId)))} />
       {hasUndated && <p className="text-center text-[11px] text-[#8C7A6E]">{t('group.timeline.undated')}</p>}
@@ -508,7 +520,8 @@ export function GroupChatView({ worktreeCall, orchestratorRoomId, onSetOrchestra
           elapsed={workingState(room.id)!.elapsed} stalled={workingState(room.id)!.stalled} background={Boolean(room.backgroundTasks)} onShowTerminal={() => setTerminalRoomId(room.id)} />;
       })()}
     </div>
-    <div className="relative z-10 shrink-0 space-y-1.5 rounded-t-[24px] border-t border-[#E6DCD0]/80 bg-[#FBF8F3]/82 p-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] backdrop-blur-xl shadow-[0_-10px_28px_-14px_rgba(90,70,50,0.18)] dark:border-[#343D5E]/80 dark:bg-[#151B2E]/88 dark:shadow-[0_-12px_30px_-12px_rgba(0,0,0,0.6)] sm:space-y-2 sm:rounded-none sm:border-[#E6DCD0] sm:bg-[#F7F2E9]/50 sm:px-5 sm:pb-3 sm:backdrop-blur-none sm:shadow-none sm:dark:border-[#6C7BA8]/25 sm:dark:bg-[#101524]/50 sm:dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_-8px_24px_-12px_rgba(0,0,0,0.65)]">
+    {/* Pending terminal decisions stay above the draft for the addressed room. */}
+    <div className="relative z-10 shrink-0 space-y-1.5 bg-transparent p-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:space-y-2 sm:px-5 sm:pb-3">
       {(awayFromLatest || newMessages) && <ScrollToLatestButton newMessages={newMessages} onClick={() => {
         const element = timelineRef.current;
         if (element) element.scrollTop = element.scrollHeight;
@@ -570,6 +583,7 @@ export function GroupChatView({ worktreeCall, orchestratorRoomId, onSetOrchestra
           shield={{ disabled: !room.live || pending, autoMode: autoModeOf?.(room.id), onMode: onMode && (auto => onMode(room.id, auto)), onPermissions: () => onCommand(room.id, '/permissions') }} />
       </fieldset>}
     </div>
+    {/* Use the lead's repository when available so changing the recipient keeps the same default worktree. */}
     {worktreeCall && (() => {
       const choices = members.filter(member => member.room?.repoPath).map(member => ({ id: member.roomId, label: `${characters[member.modelId].characterName} · ${member.room!.roomName}` }));
       const worktreeRoomId = choices.find(choice => choice.id === orchestratorRoomId)?.id ?? choices[0]?.id;

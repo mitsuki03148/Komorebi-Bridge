@@ -281,17 +281,21 @@ test('group deletion considers idle rooms even when the deleted group was not be
   } finally { presence.dispose(); }
 });
 
-test('room activity restarts the idle grace period after leaving', async () => {
+test('room activity restarts the idle grace period after leaving', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const clock = { setTimeout, clearTimeout };
   const closed: string[] = [];
-  const presence = new RoomPresence<string>(room => { closed.push(room); }, 80);
+  const presence = new RoomPresence<string>(room => { closed.push(room); }, 80, clock);
   try {
     presence.view('phone', 'a');
     presence.disconnect('phone');
-    await new Promise(resolve => setTimeout(resolve, 45));
+    t.mock.timers.tick(45);
     presence.activity('a', true);
-    await new Promise(resolve => setTimeout(resolve, 45));
-    assert.deepEqual(closed, []);
-    await new Promise(resolve => setTimeout(resolve, 50));
+    t.mock.timers.tick(45);
+    assert.deepEqual(closed, [], 'the original grace period has elapsed');
+    t.mock.timers.tick(34);
+    assert.deepEqual(closed, [], 'the restarted grace period still has 1 ms left');
+    t.mock.timers.tick(1);
     assert.deepEqual(closed, ['a']);
   } finally { presence.dispose(); }
 });

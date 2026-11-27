@@ -1,5 +1,14 @@
+// Contents
+// - Identify CLI roles and groups
+// - Describe pending approvals and questions
+// - Record conversations and task steps
+// - Describe the state of a terminal room
+// - Describe a character and its usage
+
 import type { GroupMemberRole } from './groupRoles';
 
+// Identify CLI roles and groups
+// Groups name their members by room and can assign a role and lead.
 export type CLIModelId = 'AGY' | 'CODEX' | 'CLAUDE';
 
 export interface GroupChat {
@@ -18,10 +27,8 @@ export interface GroupChat {
   orchestratorDirection?: string;
 }
 
-export type RoomStatus = 'running' | 'waiting_approval' | 'idle' | 'completed';
-
-export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
-
+// Describe pending approvals and questions
+// The Bridge records prompts the room cannot continue past until someone responds.
 export interface PendingApproval {
   id: string;
   type: 'file_edit' | 'shell_command' | 'migration' | 'workspace_trust';
@@ -45,6 +52,8 @@ export interface PendingQuestion {
   questions: { title: string; options: string[] | null; multiSelect?: boolean }[];
 }
 
+// Record conversations and task steps
+// A transcript row can carry a question, an attachment or the latest checklist.
 export type TaskStepStatus = 'pending' | 'in_progress' | 'done' | 'skipped' | 'failed';
 export interface TaskStep { title: string; status: TaskStepStatus; }
 
@@ -63,6 +72,12 @@ export interface TerminalLogEntry {
   images?: string[];
 }
 
+// Describe the state of a terminal room
+// Room snapshots combine the CLI session, current screen and conversation.
+export type RoomStatus = 'running' | 'waiting_approval' | 'idle' | 'completed';
+
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+
 export interface RemoteControlSession {
   enabled: boolean;
   sessionUrl: string;
@@ -70,6 +85,15 @@ export interface RemoteControlSession {
   connectedDevice: string;
   liveAppViewers: number;
   autoLaunchedFlag: string;
+}
+
+export interface TerminalStyleRun {
+  start: number;
+  end: number;
+  foreground?: string;
+  background?: string;
+  bold?: boolean;
+  underline?: boolean;
 }
 
 export interface TerminalRoom {
@@ -99,7 +123,7 @@ export interface TerminalRoom {
   updatedAt: string;
   remoteControl: RemoteControlSession;
   pendingApproval?: PendingApproval;
-  /** A question the agent has put to the user and not had an answer to yet (Codex). */
+  /** The Bridge can find an unanswered question in the CLI transcript or screen. */
   pendingQuestion?: PendingQuestion;
   /** The CLI was started with the workbench hook, so tickets reach it while it works without a message. */
   benchHooked?: boolean;
@@ -125,15 +149,8 @@ export interface TerminalRoom {
   logs: TerminalLogEntry[];
 }
 
-export interface TerminalStyleRun {
-  start: number;
-  end: number;
-  foreground?: string;
-  background?: string;
-  bold?: boolean;
-  underline?: boolean;
-}
-
+// Describe a character and its usage
+// The roster uses this profile for presentation, model options and quota history.
 export interface CharacterProfile {
   id: CLIModelId;
   characterName: string;

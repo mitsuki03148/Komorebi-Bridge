@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
+import { transformSync } from 'esbuild';
 import { ComposerStopButton, ScrollToLatestButton } from '../src/components/GuildActions';
 import { ContextRing } from '../src/components/ControlBar';
 import { RejectReason } from '../src/components/RejectReason';
@@ -19,6 +21,81 @@ import type { TerminalRoom } from '../src/types/guild';
 
 const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const room = (id: string, modelId = 'CODEX', extra = {}) => ({ id, modelId, roomName: id, live: true, ready: true, status: 'idle', logs: [], remoteControl: {}, effortLevel: null, selectedSubModel: 'x', bubbleSnippet: '', ...extra }) as unknown as TerminalRoom;
+
+function promptHandlerSource(app: string) {
+  const start = app.indexOf('  const handleSendPrompt = ');
+  const end = app.indexOf('  const sendWithAttachment', start);
+  assert.ok(start >= 0 && end > start);
+  return app.slice(start, end);
+}
+
+test('group prompts retain their group and run the callback on acceptance, and both compact controls send /compact', () => {
+  const app = source('src/App.tsx');
+  const sendPrompt = promptHandlerSource(app);
+  const compact = app.match(/  const handleRunCompact = .*;/)?.[0];
+  const group = app.match(/onCommand=\{([^\n]+handleSendPrompt\(roomId, text,[^\n]+selectedGroup\.id\))\}/)?.[1];
+  const phone = app.match(/onRun: (\(\) => handleRunCompact\(selectedRoom\.id[^)]*\))/)?.[1];
+  const desktop = source('src/components/RightRoomWorkspace.tsx').match(/onRun: (\(\) => onRunCompact\(room\.id[^)]*\))/)?.[1];
+  assert.ok(compact && group && phone && desktop);
+
+  const sent: { type: string; roomId: string; text: string; groupId?: string }[] = [];
+  const accepted: (() => void)[] = [];
+  const chimes: string[] = [];
+  const wiring = transformSync(`${sendPrompt}\n${compact}
+    const onRunCompact = handleRunCompact;
+    ({ group: ${group}, phone: ${phone}, desktop: ${desktop} });`,
+  { loader: 'ts' }).code;
+  const { group: sendGroup, phone: runPhone, desktop: runDesktop } = runInNewContext(wiring, {
+    allRooms: [], selectedGroup: { id: 'guild' }, selectedRoom: { id: 'phone' }, room: { id: 'desktop' },
+    sendAction: (event: typeof sent[number], callback: () => void) => { sent.push({ ...event }); accepted.push(callback); },
+    playGuildChime: (kind: string) => { chimes.push(kind); }, soundEnabled: true,
+  });
+  let callbackCount = 0;
+  sendGroup('member', '/fast', () => { callbackCount++; });
+  assert.deepEqual(sent[0], { type: 'INPUT', roomId: 'member', text: '/fast', groupId: 'guild', menuId: undefined });
+  assert.equal(callbackCount, 0);
+  accepted[0]();
+  assert.equal(callbackCount, 1);
+  runPhone();
+  runDesktop();
+  assert.deepEqual(sent.slice(1).map(({ roomId, text }) => [roomId, text]), [['phone', '/compact'], ['desktop', '/compact']]);
+  assert.deepEqual(chimes, []);
+  accepted[1]();
+  accepted[2]();
+  assert.deepEqual(chimes, ['compact', 'compact']);
+});
+
+test('choosing a model in either single-room layout can be acknowledged', () => {
+  const app = source('src/App.tsx');
+  assert.match(app, /<ControlBar[^>]+onCommand=\{handleSendPrompt\}/);
+  assert.match(app, /onSendPrompt=\{handleSendPrompt\}/);
+  assert.match(source('src/components/RightRoomWorkspace.tsx'), /<ControlBar[^>]+onCommand=\{onSendPrompt\}/);
+  assert.match(source('src/components/ControlBar.tsx'), /<ModelEffortPicker[^>]+kind="model" onSend=\{onCommand\} mobile=\{mobile\}/);
+
+  const picker = source('src/components/ModelEffortPicker.tsx');
+  const choose = picker.match(/^  const choose = [\s\S]*?^  \};/m)?.[0];
+  const click = picker.match(/data-cmd=\{opt\.cmd\}\s+onClick=\{([^\n]+)\}/)?.[1];
+  assert.ok(choose && click);
+  const code = transformSync(`${promptHandlerSource(app)}
+    const onSend = handleSendPrompt;
+    ${choose}
+    (${click});`, { loader: 'ts' }).code;
+
+  for (const mobile of [false, true]) {
+    const target = room(mobile ? 'phone' : 'desktop');
+    const command = '/model gpt-6.2-sol';
+    let action: { event: { type: string; roomId: string; text: string }; acknowledge: () => void } | undefined;
+    const chooseModel = runInNewContext(code, {
+      allRooms: [target], atPromptOnlyBlock: () => undefined, room: target, mobile, opt: { cmd: command },
+      setOpen() {}, setHoveredCmd() {}, hoveredCmdRef: { current: null }, setDragEffortIndex() {},
+      sendAction: (event: NonNullable<typeof action>['event'], acknowledge: () => void) => { action = { event: { ...event }, acknowledge }; },
+    });
+    chooseModel();
+    assert.ok(action);
+    assert.deepEqual(action.event, { type: 'INPUT', roomId: target.id, text: command, groupId: undefined, menuId: undefined });
+    assert.doesNotThrow(action.acknowledge, `the ${target.id} command accepts the Bridge acknowledgement`);
+  }
+});
 
 test('the latest-message button is a round arrow that floats, with a dot only for news', () => {
   const quiet = renderToStaticMarkup(createElement(ScrollToLatestButton, { onClick() {} }));

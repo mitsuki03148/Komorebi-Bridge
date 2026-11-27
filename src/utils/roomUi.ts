@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CharacterProfile, TerminalRoom } from '../types/guild';
 import { getLang, localeOf, t } from '../i18n';
 
@@ -118,6 +118,30 @@ export async function copyText(text: string) {
   } finally {
     input.remove();
   }
+}
+
+/** Keep copy feedback tied to the most recent click, including when clipboard permission takes time. */
+export function useCopyFeedback(durationMs: number) {
+  const [status, setStatus] = useState<'idle' | 'copied' | 'error'>('idle');
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const attempt = useRef(0);
+
+  useEffect(() => () => {
+    attempt.current += 1;
+    clearTimeout(timer.current);
+  }, []);
+
+  const copy = async (text: string) => {
+    const current = ++attempt.current;
+    clearTimeout(timer.current);
+    setStatus('idle');
+    const ok = await copyText(text);
+    if (current !== attempt.current) return;
+    setStatus(ok ? 'copied' : 'error');
+    timer.current = setTimeout(() => setStatus('idle'), durationMs);
+  };
+
+  return { copy, status };
 }
 
 /** "11:59 · 約 1 小時 5 分後" for today, "11/14 08:30 · 約 1 日 13 小時後" for later days; empty when unknown. */

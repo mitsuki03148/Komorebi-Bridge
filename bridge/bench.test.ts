@@ -1,6 +1,8 @@
 import { mkdtemp } from './test-temp';
 import assert from 'node:assert/strict';
-import { appendFile, rm, stat, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { appendFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -266,19 +268,34 @@ test('only the last main-task receipt in the crown’s group carries the closeou
   const last = bench.send({ groupId: 'g', from: hikaru, to: hitomi, body: 'Final check' });
   const reply = bench.send({ groupId: 'g', from: hikaru, to: hitomi, body: 'Follow-up', replyTo: last.id });
   const elsewhere = bench.send({ groupId: 'elsewhere', from: hikaru, to: hibiki, body: 'Other group' });
+  bench.markSeen(elsewhere.id);
+  const incoming = bench.send({ groupId: 'g', from: hitomi, to: hikaru, body: 'Incoming' });
   const done = (id: number, from = hitomi.sessionId) => benchAction(value, { requestId: 'r', action: 'done', from, id, note: 'PASS' });
   const hook = () => JSON.stringify(benchHook(value, 'codex', { session_id: hikaru.sessionId }));
 
   assert.equal(done(first.id).ok, true);
   assert.doesNotMatch(hook(), /收尾提示/);
   assert.equal(done(last.id).ok, true);
-  assert.match(hook(), /收尾提示.*HANDOFF.*INBOX — DONE.*結果：PASS/);
+  const receipt = bench.mine(hikaru.sessionId).find(ticket => ticket.replyTo === last.id)!;
+  const injected = hook();
+  assert.match(injected, /收尾提示.*HANDOFF.*INBOX — DONE.*結果：PASS/);
+  assert.ok(injected.includes(`#${reply.id} [新] 光 · Komorebi CLI App → 瞳 · Xcode Testing 1：Follow-up`));
+  assert.ok(injected.includes(`#${elsewhere.id} [已讀] 光 · Komorebi CLI App → 響 · CLI app：Other group`));
+  assert.doesNotMatch(injected, /仍未完成嘅派單：.*Incoming/);
+  assert.doesNotMatch(injected, /仍未完成嘅派單：.*Final check/);
+  const workerView = benchAction(value, { requestId: 'r', action: 'show', from: hitomi.sessionId, id: receipt.id });
+  assert.equal(workerView.ok, true);
+  assert.doesNotMatch(workerView.lines.join('\n'), /仍未完成嘅派單|Other group/);
   assert.doesNotMatch(hook(), /收尾提示/, 'the usual receipt is injected once');
   assert.equal(bench.get(reply.id)?.status, 'new', 'the reply still needs its own answer');
-  assert.equal(bench.get(elsewhere.id)?.status, 'new');
+  assert.equal(bench.get(elsewhere.id)?.status, 'seen');
+  assert.equal(bench.get(incoming.id)?.status, 'seen');
   assert.equal(done(reply.id).ok, true);
   assert.equal(done(elsewhere.id, hibiki.sessionId).ok, true);
   assert.doesNotMatch(hook(), /收尾提示/, 'replies and groups without this crown use ordinary receipts');
+  const solo = bench.send({ groupId: 'g', from: hikaru, to: hitomi, body: 'Only task' });
+  assert.equal(done(solo.id).ok, true);
+  assert.ok(hook().includes('仍未完成嘅派單：\\n冇。'));
   assert.deepEqual(notices, [], 'no extra notification or ticket');
 });
 
@@ -559,6 +576,125 @@ test('finishing a ticket with a file receipt records that it existed, and later 
     assert.equal(proveReceipt('34301adf'), undefined);
     assert.equal(proveReceipt(dir)?.state, 'dir');
   } finally { await remove(dir, { recursive: true, force: true }); }
+});
+
+test('a completion persists Git, gate and receipt facts and the notice checks their current state', async t => {
+  const base = await mkdtemp(join(tmpdir(), 'bench-completion-'));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const root = await realpath(base);
+  const repo = join(root, 'checkout');
+  const origin = join(root, 'origin.git');
+  const gateResultDir = join(root, 'gate');
+  const customDir = join(root, 'custom');
+  await Promise.all([repo, origin, gateResultDir, customDir].map(dir => mkdir(dir)));
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  git('init', '-q', '-b', 'trial');
+  git('config', 'user.email', 'bench@example.invalid');
+  git('config', 'user.name', 'Bench');
+  await writeFile(join(repo, 'old.txt'), 'tracked');
+  git('add', 'old.txt');
+  git('commit', '-qm', 'initial');
+  git('init', '-q', '--bare', origin);
+  git('remote', 'add', 'origin', origin);
+  git('push', '-q', 'origin', 'trial');
+  const head = git('rev-parse', 'HEAD');
+  git('mv', 'old.txt', 'renamed.txt');
+  await mkdir(join(repo, 'new'));
+  await writeFile(join(repo, 'new', 'one\nline.txt'), 'untracked');
+  await writeFile(join(repo, 'new', 'two.txt'), 'untracked');
+  const receipt = join(root, 'HANDOFF.md');
+  await writeFile(receipt, 'evidence');
+  const hash = createHash('sha256').update('evidence').digest('hex');
+
+  const lead = room(hibiki), worker = room(hikaru), other = room(hitomi);
+  const { value } = deps([lead, worker, other], [group('g', lead, worker, other)]);
+  value.gateResultDir = gateResultDir;
+  const state = join(root, 'bench.json');
+  value.bench = new Bench(state);
+  const call = (action: string, fields: Record<string, unknown>) => benchRequest(value, { requestId: 'r', action, ...fields });
+  const gatePath = (dir: string, second: number) => join(dir, `2026-11-27T01-50-0${second}.381Z-bfe6925e-2fea-474a-ae39-44a9e7759f2f.json`);
+  const gate = { root: repo, head, ok: true, status: 'clean', test: { tail: 'ℹ tests 7\nℹ pass 7\nℹ fail 0' } };
+  await writeFile(gatePath(gateResultDir, 1), JSON.stringify({ ...gate, ok: false }));
+  await writeFile(gatePath(gateResultDir, 3), JSON.stringify({ ...gate, root: origin }));
+  await writeFile(gatePath(gateResultDir, 4), '{');
+  const customGate = gatePath(customDir, 2);
+  await writeFile(customGate, JSON.stringify(gate));
+  assert.equal((await call('send', { from: hikaru.sessionId, to: hikaru.sessionId, notify: true, source: 'verify-gate',
+    body: `verify-gate PASS；ℹ tests 7, ℹ pass 7；結果：${customGate}` })).ok, true);
+
+  const task = value.bench.send({ groupId: 'g', from: hibiki, to: hikaru, body: 'verify', repo });
+  const done = (fields: Record<string, unknown> = {}) => call('done', { from: hikaru.sessionId, id: task.id, receipt, ...fields });
+  assert.equal((await done({ from: hibiki.sessionId })).ok, false);
+  assert.equal((await done()).ok, true);
+  const notice = value.bench.mine(hibiki.sessionId).find(ticket => ticket.replyTo === task.id)!;
+  value.bench = new Bench(state);
+  const show = (from = hibiki.sessionId) => call('show', { from, id: notice.id });
+  const checked = await show();
+  assert.equal(checked.ok, true);
+  assert.ok(checked.lines[0].split('\n').includes(`自動核對：HEAD ${head}｜已推｜未 commit 3 個檔｜gate PASS 7/7｜receipt sha256 ${hash}`));
+  assert.equal(checked.lines.at(-1), '核對：SHA 存在｜分支一致｜receipt 一致');
+  assert.equal(await readFile(receipt, 'utf8'), 'evidence');
+  assert.equal(git('rev-parse', 'refs/heads/trial'), head);
+  assert.equal((await show(hitomi.sessionId)).ok, false);
+  assert.doesNotMatch((await show(hikaru.sessionId)).lines.join('\n'), /\n核對：/);
+
+  git('commit', '-qm', 'rename');
+  await writeFile(receipt, 'changed evidence');
+  const changed = await show();
+  assert.equal(changed.lines.at(-1), '核對：SHA 存在｜分支 SHA 已變｜receipt hash 已變');
+  assert.match(changed.lines[0], /｜已推｜/, 'the saved origin comparison is a completion-time fact');
+
+  const unpushed = value.bench.send({ groupId: 'g', from: hibiki, to: hikaru, body: 'new version', repo });
+  assert.equal((await done({ id: unpushed.id, receipt: undefined })).ok, true);
+  const next = value.bench.mine(hibiki.sessionId).find(ticket => ticket.replyTo === unpushed.id)!;
+  assert.match(ticketText(next, TOOL), /｜未推｜未 commit 2 個檔｜gate PASS 7\/7（HEAD 不同）｜receipt UNKNOWN/);
+
+  await writeFile(gatePath(gateResultDir, 5), JSON.stringify({ ...gate, head: git('rev-parse', 'HEAD'), ok: false,
+    status: '?? new/', test: { tail: 'ℹ tests 7\nℹ pass 6\nℹ fail 1' } }));
+  const failedGate = value.bench.send({ groupId: 'g', from: hibiki, to: hikaru, body: 'failed gate', repo });
+  assert.equal((await done({ id: failedGate.id, receipt: undefined })).ok, true);
+  const failed = value.bench.mine(hibiki.sessionId).find(ticket => ticket.replyTo === failedGate.id)!;
+  assert.match(ticketText(failed, TOOL), /gate FAIL 6\/7（驗證時工作樹有變更）/);
+
+  git('switch', '--detach', '-q');
+  git('branch', '-D', 'trial');
+  await rm(receipt);
+  assert.equal((await show()).lines.at(-1), '核對：SHA 存在｜分支唔存在｜receipt 唔存在');
+  await rename(repo, join(root, 'other-checkout'));
+  assert.equal((await show()).lines.at(-1), '核對：SHA UNKNOWN｜分支 UNKNOWN｜receipt 唔存在');
+  await mkdir(repo);
+  git('init', '-q', '-b', 'replacement');
+  assert.equal((await show()).lines.at(-1), '核對：SHA 唔存在｜分支唔存在｜receipt 唔存在');
+});
+
+test('missing checkout, gate and receipt evidence leave ordinary completion usable', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'bench-missing-completion-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const repo = await realpath(dir);
+  const lead = room(hibiki), worker = room(hikaru);
+  const { value } = deps([lead, worker], [group('g', lead, worker)]);
+  value.gateResultDir = join(repo, 'no-gate');
+  const call = (action: string, fields: Record<string, unknown>) => benchRequest(value, { requestId: 'r', action, ...fields });
+  const complete = async (path: string) => {
+    const task = value.bench.send({ groupId: 'g', from: hibiki, to: hikaru, body: 'check', repo: path });
+    assert.equal((await call('done', { from: hikaru.sessionId, id: task.id, receipt: join(repo, 'missing.md') })).ok, true);
+    assert.equal(task.status, 'done');
+    const notice = value.bench.mine(hibiki.sessionId).find(ticket => ticket.replyTo === task.id)!;
+    return call('show', { from: hibiki.sessionId, id: notice.id });
+  };
+  const missingGit = await complete(repo);
+  assert.match(missingGit.lines[0], /HEAD UNKNOWN｜推送 UNKNOWN｜未 commit UNKNOWN｜gate UNKNOWN｜receipt UNKNOWN/);
+  assert.equal(missingGit.lines.at(-1), '核對：SHA UNKNOWN｜分支 UNKNOWN｜receipt 唔存在');
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q', '-b', 'trial');
+  git('-c', 'user.email=bench@example.invalid', '-c', 'user.name=Bench', 'commit', '-qm', 'initial', '--allow-empty');
+  const head = git('rev-parse', 'HEAD');
+  const missingGate = await complete(repo);
+  assert.ok(missingGate.lines[0].includes(`HEAD ${head}｜推送 UNKNOWN｜未 commit 0 個檔｜gate UNKNOWN｜receipt UNKNOWN`));
+  assert.equal(missingGate.lines.at(-1), '核對：SHA 存在｜分支一致｜receipt 唔存在');
+  const subdir = join(repo, 'not-a-worktree');
+  await mkdir(subdir);
+  assert.match((await complete(subdir)).lines[0], /HEAD UNKNOWN/);
 });
 
 test('finished tickets retire after a week or past the newest 500; a ticket open under three hours stays', () => {

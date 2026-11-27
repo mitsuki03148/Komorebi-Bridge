@@ -1,3 +1,10 @@
+// Contents
+// Shared panel controls
+// Load worktree data
+// Show diffs and files
+// Choose a worktree
+// Open and close the room panel
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ChevronUp, FileText, Folder, GitCompare, Image as ImageIcon, RefreshCw, Search, X } from 'lucide-react';
 import { useT } from '../i18n/useLang';
@@ -6,6 +13,18 @@ import { useEscape } from '../utils/roomUi';
 import { Markdown } from './Markdown';
 import type { GhCall } from './github/GitHubPanel';
 
+// Shared panel controls
+// Keep the display helpers, button styles, and edge gesture distances together for the panel views.
+const iconButton = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#E5D7C6] dark:border-[#364062] bg-white/90 dark:bg-[#232B45] text-[#7D6D61] dark:text-[#B5BED6] transition hover:bg-white dark:hover:bg-[#2B3554] active:scale-95';
+const row = 'flex min-h-10 w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-[13px] transition hover:bg-[#F5EFE6] dark:hover:bg-[#222947] focus-visible:outline-2 focus-visible:outline-[#965069]';
+const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+const child = (path: string, name: string) => path ? `${path}/${name}` : name;
+const openAt = 70;
+/** Less finger travel than this is a tap, not a pull. */
+const tapSlop = 8;
+
+// Load worktree data
+// The diff, file browser, and picker use the same loading and error states.
 export interface WorktreeListing { path: string; dirs: string[]; files: { name: string; size: number; kind: 'text' | 'image' | 'other' }[]; truncated: boolean }
 export type WorktreeFile =
   | { path: string; kind: 'text'; text: string; truncated: boolean; size: number }
@@ -15,11 +34,6 @@ export interface DiffFile { path: string; status: 'added' | 'deleted' | 'modifie
 export interface WorktreeDiff { mode: WorktreeDiffMode; subject?: string; files: DiffFile[]; truncated: boolean }
 
 type Load<T> = { data?: T; error?: string; loading: boolean };
-
-const iconButton = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#E5D7C6] dark:border-[#364062] bg-white/90 dark:bg-[#232B45] text-[#7D6D61] dark:text-[#B5BED6] transition hover:bg-white dark:hover:bg-[#2B3554] active:scale-95';
-const row = 'flex min-h-10 w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-[13px] transition hover:bg-[#F5EFE6] dark:hover:bg-[#222947] focus-visible:outline-2 focus-visible:outline-[#965069]';
-const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-const child = (path: string, name: string) => path ? `${path}/${name}` : name;
 
 /** One request to the Mac: the latest answer wins, and an old one arriving late is dropped. */
 function useLoad<T>(call: GhCall, op: string, params: Record<string, unknown> | undefined, tick: number, fallback: string): Load<T> {
@@ -39,6 +53,8 @@ function useLoad<T>(call: GhCall, op: string, params: Record<string, unknown> | 
   return state.key === key ? state : { loading: Boolean(params) };
 }
 
+// Show diffs and files
+// Both views read from the selected worktree and reload when the user refreshes the panel.
 type WorktreeViewProps = { call: GhCall; roomId: string; worktree?: string; tick: number };
 
 function DiffView({ call, roomId, worktree, tick, initialMode }: WorktreeViewProps & { initialMode: WorktreeDiffMode }) {
@@ -128,10 +144,8 @@ function FilesView({ call, roomId, worktree, tick }: WorktreeViewProps) {
   </div>;
 }
 
-const openAt = 70;
-/** Less finger travel than this is a tap, not a pull. */
-const tapSlop = 8;
-
+// Choose a worktree
+// Keep the saved choice per room and let the user search linked worktrees.
 const worktreeStorageKey = (roomId: string) => `komorebi.worktree.${roomId}`;
 const folderName = (path: string) => path.split('/').pop() || path;
 
@@ -183,6 +197,8 @@ function WorktreeSearch({ call, roomId, tick, entries, selection, onPick }: {
   </div>;
 }
 
+// Open and close the room panel
+// Keep panel gestures, keyboard dismissal, and the selected room and tab in the enclosing layer.
 /** A block that scrolls sideways on its own (a long code line) keeps its own horizontal drag. */
 const scrollsSideways = (target: EventTarget | null, stop: Element) => {
   for (let node = target instanceof Element ? target : null; node && node !== stop; node = node.parentElement) {
@@ -257,11 +273,8 @@ export function WorktreeLayer({ roomId, call, choices, initialDiffMode = 'work' 
       onPointerUp={() => finish(() => { if (pull > openAt || travel.current < tapSlop) setOpen(true); })} onPointerCancel={() => finish(() => undefined)}
       onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setOpen(true); } }}
       className="group absolute right-0 top-1/2 z-20 flex h-[4.5rem] w-5 -translate-y-1/2 touch-none flex-col items-center justify-center gap-1.5 rounded-l-full border border-r-0 border-white/75 bg-white/30 pl-0.5 text-[#7D6558] shadow-[-4px_4px_14px_-6px_rgba(90,70,50,0.22),inset_1px_1px_0_rgba(255,255,255,0.85)] backdrop-blur-md backdrop-saturate-150 transition hover:w-6 hover:bg-white/48 hover:text-[#6D324B] dark:border-[#7B8EC2]/35 dark:bg-[#182038]/34 dark:text-[#C5D0EC] dark:shadow-[-4px_4px_16px_-6px_rgba(0,0,0,0.55),inset_1px_1px_0_rgba(255,255,255,0.16)] dark:hover:bg-[#1E2846]/52 cursor-pointer">
-      {/* Top icon: Git Diff */}
       <GitCompare className="h-3 w-3 shrink-0 text-[#B85C74] dark:text-[#EFA4B2]" aria-hidden="true" />
-      {/* Tiny liquid-glass divider dot */}
       <span aria-hidden="true" className="h-1 w-1 rounded-full bg-[#C4A898]/70 dark:bg-[#7B8EC2]/60" />
-      {/* Bottom icon: Folder / Files */}
       <Folder className="h-3 w-3 shrink-0 text-[#638C6D] dark:text-[#9AD0A6]" aria-hidden="true" />
     </button>}
     {shown && <section role="dialog" aria-label={t('worktree.title')} data-no-swipe data-worktree

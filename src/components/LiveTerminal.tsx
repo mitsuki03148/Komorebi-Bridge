@@ -1,3 +1,8 @@
+// Contents
+// - Render terminal text
+// - Start, end or open remote CLI sessions
+// - Display the live terminal and send keys
+
 import { useT } from '../i18n/useLang';
 import { controlButtonClass } from './ControlBar';
 import { leastScroll, menuHint, placement, scrollAfterUpdate, selectionLabel, wasAtEnd, type Placement } from '../utils/terminalScroll';
@@ -5,6 +10,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, TerminalSquare } from 'lucide-react';
 import type { TerminalRoom, TerminalStyleRun } from '../types/guild';
 
+// Render terminal text
+// Styled spans are interleaved with plain text so the screen stays selectable.
 export function TerminalScreenText({ text, styles = [] }: { text: string; styles?: TerminalStyleRun[] }) {
   const fragments = [];
   let cursor = 0;
@@ -20,6 +27,7 @@ export function TerminalScreenText({ text, styles = [] }: { text: string; styles
   return fragments;
 }
 
+// Claude can mark a selected row in text even when no colour run covers it.
 function terminalStyles(room: TerminalRoom): TerminalStyleRun[] {
   const styles = room.screenStyles ?? [];
   if (room.modelId !== 'CLAUDE' || !room.menu || !room.screen) return styles;
@@ -34,6 +42,8 @@ function terminalStyles(room: TerminalRoom): TerminalStyleRun[] {
   return [...styles, ...additions].sort((a, b) => a.start - b.start);
 }
 
+// Start, end or open remote CLI sessions
+// The room toolbar uses compact controls on phones and inline actions on desktop.
 export function LiveTerminalControls({ room, onStart, onClose, onRemote, compact = false }: {
   room: TerminalRoom;
   onStart: () => void;
@@ -54,7 +64,6 @@ export function LiveTerminalControls({ room, onStart, onClose, onRemote, compact
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, [open]);
   const remote = room.remoteStatus === 'on' ? 'ON' : room.remoteStatus === 'connecting' ? t('terminal.remote.connecting') : room.remoteStatus === 'unknown' ? t('terminal.remote.unknown') : 'OFF';
-  // In a popover the actions are outlined buttons; inline beside the other controls they are quiet like them.
   const pill = compact ? 'rounded-full border border-[#E2D6C5] dark:border-[#364062] bg-white dark:bg-[#232B45] px-3 py-1.5 text-[#4A3E36] dark:text-[#ECE7DF]' : 'rounded-full px-2.5 py-1.5 hover:bg-white/80 dark:hover:bg-[#232B45]';
   const actions = (
     <>
@@ -68,7 +77,7 @@ export function LiveTerminalControls({ room, onStart, onClose, onRemote, compact
       {room.remoteControl.sessionUrl && <a href={room.remoteControl.sessionUrl} target="_blank" rel="noreferrer" onClick={() => setOpen(false)} className={`${pill} underline`}>{t('terminal.remote.open')}</a>}
     </>
   );
-  // On the phone Remote Control is just typing /rc, so unless there is a remote link to open, a menu holding one button is a detour: end it directly.
+  // Offer End directly in the compact toolbar when there is no remote link to open.
   if (compact && room.live && !room.remoteControl.sessionUrl) return (
     <button type="button" aria-label={t('terminal.close.cli')} onClick={onClose} className={controlButtonClass}>{t('terminal.close')}</button>
   );
@@ -93,6 +102,8 @@ export function LiveTerminalControls({ room, onStart, onClose, onRemote, compact
   );
 }
 
+// Display the live terminal and send keys
+// Menu prompts can open the panel, while manual keys depend on the current room state.
 export function LiveTerminal({ room, onMenu, onManualKey, forceOpen = false, compact = false }: {
   room: TerminalRoom;
   onMenu: (key: string) => void;

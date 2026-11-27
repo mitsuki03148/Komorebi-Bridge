@@ -1,3 +1,10 @@
+// Contents
+// Set bubble defaults
+// Separate message days
+// Show user text and Bridge notes
+// Fold long agent replies
+// Render a message
+
 import { useT } from '../i18n/useLang';
 import { localizePartyLabel, localizeWorkbenchLabel } from '../i18n/characterName';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
@@ -13,8 +20,13 @@ import { parseFileQuest } from '../utils/questNotice';
 import { Markdown } from './Markdown';
 import { SeparatorFloralBud } from './BotanicalAccents';
 
+// Set bubble defaults
+// User and agent bubbles share a shadow, and handoff notes use their own folding limit.
 const soft = 'shadow-[0_1px_2px_rgba(90,70,50,0.05),0_2px_8px_rgba(90,70,50,0.03)]';
+const handoffFold = 260;
 
+// Separate message days
+// The timeline uses the same date divider in group and single rooms.
 /** A quiet date line between messages from different days, drawn with two soft hand-penned tapered ink strokes and tiny botanical buds. */
 export function DaySeparator({ label }: { label: string }) {
   return <div role="separator" className="flex items-center gap-2 py-1.5 text-[11px] text-[#A39284] dark:text-[#8E98B8]" aria-label={label}>
@@ -30,6 +42,8 @@ export function DaySeparator({ label }: { label: string }) {
   </div>;
 }
 
+// Show user text and Bridge notes
+// The Bridge roster can expand independently of the user's message.
 /** The Founder's own words, with the roster Bridge added after them folded into a small note. */
 function UserText({ text }: { text: string }) {
   const { t } = useT();
@@ -43,15 +57,14 @@ function UserText({ text }: { text: string }) {
   </>;
 }
 
-const handoffFold = 260;
-
+// Fold long agent replies
+// Mount an interactive preview until the user opens the full reply.
 /** A reply this long is shown folded, with a way to read it all and a way back to its first line. */
 export const longReplyChars = 1500;
 export const longReplyLines = 28;
 const isLongReply = (text: string) => text.length > longReplyChars || text.split('\n').length > longReplyLines;
 
 /**
- * The first part of a long reply, cut at a paragraph (or line) end so no sentence is chopped, with any code block it cuts open closed again.
  * The folded view shows this much as real, working content; nothing is hidden behind it, so its links and text stay usable.
  */
 export const foldPreviewChars = 900;
@@ -77,7 +90,6 @@ function FoldedReply({ text, render }: { text: string; render: (text: string) =>
   useEffect(() => { if (!open && refocus.current) { refocus.current = false; expand.current?.focus(); } }, [open]);
   const button = 'rounded-full border border-[#E2D3C1] dark:border-[#364062] bg-white/80 dark:bg-[#1E253D] px-3 py-1 text-[11px] font-semibold text-[#8C6D58] dark:text-[#C5CDE3]';
   return <div ref={box} data-long-reply={open ? 'open' : 'folded'}>
-    {/* Folded, only the preview is on the page (real content, fully usable); opening swaps in the whole reply. */}
     <div data-fold-body className={open ? '' : '[mask-image:linear-gradient(to_bottom,black_80%,transparent)]'}>
       {render(open ? text : foldPreview(text))}
     </div>
@@ -93,10 +105,8 @@ function LongReply({ text, render }: { text: string; render: (text: string) => R
   return isLongReply(text) ? <FoldedReply text={text} render={render} /> : <>{render(text)}</>;
 }
 
-/**
- * One message, the same in a single room and in a group. The agent's side has a soft colour edge and name in the
- * role's colour, the user's side is a warm rose; a message that continues a run shows no name or time.
- */
+// Render a message
+// Single and group rooms share this bubble, with the speaker and time at the start of each message run.
 export function MessageBubble({ entry, modelId, name, roomId, header = true, addressee, count, onNameClick }: {
   entry: TerminalLogEntry;
   /** The role this room belongs to (whose colour the agent's side uses). */

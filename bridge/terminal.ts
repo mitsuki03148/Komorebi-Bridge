@@ -1,5 +1,17 @@
+// Contents
+// Read approval prompts — Identify the request and its responses.
+// Read menus and confirmations — Identify the menu and how to use it.
+// See work in progress — Detect active work and background tasks.
+// Find the live input box — Read the draft and recognize the prompt.
+// Read model and quota — Find the selected model, effort and allowance.
+// Read question choices — Identify options, the cursor and free-text answers.
+// Find resume and session details — Recognize a resume prompt or read a session ID.
+
 import { randomUUID } from 'node:crypto';
 import type { CLIModelId, EffortLevel, PendingApproval } from '../src/types/guild';
+
+// ── Read approval prompts ────────────────────────────────────────────
+// Read the choices from the terminal so the approval card matches the visible request.
 
 export interface ApprovalPrompt {
   fingerprint: string;
@@ -12,18 +24,18 @@ export interface ApprovalPrompt {
 
 const numberedOption = /^\s*(?:\(selected\)\s*)?[›>❯]?\s*([1-9])\.\s+(.*\S)\s*$/;
 
-function choiceId(label: string, key: string) {
-  if (/switch to auto mode/i.test(label)) return 'auto';
-  if (/don['’]t ask again/i.test(label)) return 'remember';
-  return `option-${key}`;
-}
-
 const trustHeading = /(?:Do you trust the contents of this (?:project|directory)\?|Permission Required: Accessing workspace:|Trust this folder\?)/i;
 const approvalHeadings = {
   AGY: /^\s*(?:Requesting permission for:|Do you want to (?:apply|allow)|Apply this (?:edit|change)\?)/i,
   CODEX: /^\s*(?:Would you like to (?:run|make|apply|allow)|Do you trust the contents of this directory\?)/i,
   CLAUDE: /^\s*(?:Permission Required:|This mode should only be used in a sandboxed)/i,
 };
+
+function choiceId(label: string, key: string) {
+  if (/switch to auto mode/i.test(label)) return 'auto';
+  if (/don['’]t ask again/i.test(label)) return 'remember';
+  return `option-${key}`;
+}
 
 export function approvalPrompt(model: CLIModelId, screen: string): ApprovalPrompt | undefined {
   if (isComposer(model, screen)) return;
@@ -118,45 +130,8 @@ export function approvalPrompt(model: CLIModelId, screen: string): ApprovalPromp
   };
 }
 
-export function visibleMenu(model: CLIModelId, screen: string, requested: string | undefined) {
-  if (!screen.trim() || isComposer(model, screen) || hasWorkingIndicator(screen) || (model === 'AGY' && agyQuestionScreen(screen))) return;
-  const menu = (title: string, confirm: boolean) => ({ title, confirm });
-  if (model === 'AGY' && /^\s*[>›❯]?\s*Project\s*$/im.test(screen) &&
-      /Shared with Antigravity/i.test(screen) && /^\s*[>›❯]?\s*Global\s*$/im.test(screen) &&
-      /Keyboard:.*↑\s*\/\s*↓\s*Navigate.*enter\s+Save.*esc\s+Close/i.test(screen)) {
-    return menu('規則設定', true);
-  }
-  const command = requested?.split(' ')[0];
-  if (command === '/config') return menu('CLI 設定', true);
-  if (command === '/permissions') return menu('權限設定', true);
-  if ((command === '/model' || command === '/effort') &&
-    /^\s*(?:[╭│┌└]\s*)?(?:Select (?:a )?model|Switch Model|Set Model|Choose (?:a )?model|Select (?:a )?reasoning|Select Reasoning|Set Effort|Select effort)/im.test(screen)) {
-    return menu('模型／推理力度', true);
-  }
-  if (command === '/resume' &&
-    /^\s*(?:[╭│┌└]\s*)?(?:Resume (?:a|from) (?:previous )?(?:session|conversation)|Select a session|Session Picker|Resume Session|Recent conversations)/im.test(screen)) {
-    return menu('工作階段選單', true);
-  }
-  if (command === '/usage') {
-    if (model === 'CODEX' && /^\s*(?:Usage|Usage limit resets|Redeem reset|Earned resets?)\s*$/im.test(screen)) {
-      return menu('Codex 用量及 Reset', true);
-    }
-    if (model !== 'CODEX' && /(?:Models & Quota|^\s*Current session|^\s*Current week)/im.test(screen)) {
-      return menu('用量', false);
-    }
-  }
-  if (command === '/remote-control' && /(?:Enable Remote Control|Disconnect Remote Control|Select with numbers|esc (?:close|back|cancel))/i.test(screen)) {
-    return menu('Remote Control', true);
-  }
-  if (command === '/review' && /(?:Review presets|Select a review)/i.test(screen)) return menu('Review', true);
-  // Claude's question card with several questions ends here: nothing is sent until y.
-  if (answersReview(model, screen)) return menu('提交答案', true);
-  const footer = screen.split('\n').slice(-10).join('\n');
-  if (!/(?:permission required|trust this|approve|allow this|do you want to (?:allow|run|apply))/i.test(screen) &&
-      (numberedMenuChoices(model, screen).size > 0 && /select with numbers/i.test(footer) ||
-       command && /(?:enter (?:to )?(?:confirm|select)|↑\s*\/\s*↓\s+navigate)/i.test(footer))) return menu('CLI 選單', true);
-  if (requested) return menu('CLI 畫面', false);
-}
+// ── Read menus and confirmations ─────────────────────────────────────
+// Show controls for the menu that is open and use the keys it advertises.
 
 export function numberedMenuChoices(model: CLIModelId, screen: string) {
   const footer = screen.split('\n').slice(-10).join('\n');
@@ -194,6 +169,48 @@ export function modelConfirmationChoices(model: CLIModelId, screen: string) {
     /^\s*n\.\s*No,\s*go back\s*$/im.test(lines) && /Enter y\/n:\s*$/im.test(lines);
 }
 
+export function visibleMenu(model: CLIModelId, screen: string, requested: string | undefined) {
+  if (!screen.trim() || isComposer(model, screen) || hasWorkingIndicator(screen) || (model === 'AGY' && agyQuestionScreen(screen))) return;
+  const menu = (title: string, confirm: boolean) => ({ title, confirm });
+  if (model === 'AGY' && /^\s*[>›❯]?\s*Project\s*$/im.test(screen) &&
+      /Shared with Antigravity/i.test(screen) && /^\s*[>›❯]?\s*Global\s*$/im.test(screen) &&
+      /Keyboard:.*↑\s*\/\s*↓\s*Navigate.*enter\s+Save.*esc\s+Close/i.test(screen)) {
+    return menu('規則設定', true);
+  }
+  const command = requested?.split(' ')[0];
+  if (command === '/config') return menu('CLI 設定', true);
+  if (command === '/permissions') return menu('權限設定', true);
+  if ((command === '/model' || command === '/effort') &&
+    /^\s*(?:[╭│┌└]\s*)?(?:Select (?:a )?model|Switch Model|Set Model|Choose (?:a )?model|Select (?:a )?reasoning|Select Reasoning|Set Effort|Select effort)/im.test(screen)) {
+    return menu('模型／推理力度', true);
+  }
+  if (command === '/resume' &&
+    /^\s*(?:[╭│┌└]\s*)?(?:Resume (?:a|from) (?:previous )?(?:session|conversation)|Select a session|Session Picker|Resume Session|Recent conversations)/im.test(screen)) {
+    return menu('工作階段選單', true);
+  }
+  if (command === '/usage') {
+    if (model === 'CODEX' && /^\s*(?:Usage|Usage limit resets|Redeem reset|Earned resets?)\s*$/im.test(screen)) {
+      return menu('Codex 用量及 Reset', true);
+    }
+    if (model !== 'CODEX' && /(?:Models & Quota|^\s*Current session|^\s*Current week)/im.test(screen)) {
+      return menu('用量', false);
+    }
+  }
+  if (command === '/remote-control' && /(?:Enable Remote Control|Disconnect Remote Control|Select with numbers|esc (?:close|back|cancel))/i.test(screen)) {
+    return menu('Remote Control', true);
+  }
+  if (command === '/review' && /(?:Review presets|Select a review)/i.test(screen)) return menu('Review', true);
+  if (answersReview(model, screen)) return menu('提交答案', true);
+  const footer = screen.split('\n').slice(-10).join('\n');
+  if (!/(?:permission required|trust this|approve|allow this|do you want to (?:allow|run|apply))/i.test(screen) &&
+      (numberedMenuChoices(model, screen).size > 0 && /select with numbers/i.test(footer) ||
+       command && /(?:enter (?:to )?(?:confirm|select)|↑\s*\/\s*↓\s+navigate)/i.test(footer))) return menu('CLI 選單', true);
+  if (requested) return menu('CLI 畫面', false);
+}
+
+// ── See work in progress ─────────────────────────────────────────────
+// Use the footer to tell whether the room has work in progress.
+
 export function hasWorkingIndicator(screen: string) {
   const tail = screen.split('\n').slice(-14).join('\n');
   // AGY draws a braille spinner in front of whatever it is doing ("Reading file...", "Running command...", "Searching..."),
@@ -214,6 +231,9 @@ export function backgroundTasks(model: CLIModelId, screen: string): number {
   if (model === 'CLAUDE') return count(/·\s*(\d+) shells?\s*·\s*↓ to manage/i) || count(/\b(\d+) shells? still running\b/i);
   return count(/\b(\d+) task\(s\)\s*·\s*\/tasks\b/i);
 }
+
+// ── Find the live input box ──────────────────────────────────────────
+// Check the live draft before sending text so older terminal output stays separate.
 
 const agyDivider = /^[ \t]*─{8,}[ \t]*$/;
 const agyContinuationLimit = 12;
@@ -291,6 +311,9 @@ export function codexDraftMatches(screen: string, message: string) {
   return offset > 0 && offset === message.length;
 }
 
+// ── Read model and quota ─────────────────────────────────────────────
+// Keep the room display current when model settings or usage change in the terminal.
+
 export function activeModel(model: CLIModelId, screen: string) {
   const effort = '(low|medium|high|xhigh|max|ultra)';
   const pattern = model === 'AGY'
@@ -347,6 +370,9 @@ export function readUsage(model: CLIModelId, screen: string, selectedModel: stri
   return { hp, mp, vouchers };
 }
 
+// ── Read question choices ────────────────────────────────────────────
+// Read the question on screen before matching an answer to its available options.
+
 export interface QuestionPanel {
   options: { n: number; label: string }[];
   /** The number the highlight (›) is on. */
@@ -358,7 +384,6 @@ export interface QuestionPanel {
 /** Whether Codex has a question open for answering on screen (its footer line reads "enter submit …"). */
 export const questionOpen = (screen: string) => /enter submit/i.test(screen.split('\n').slice(-12).join('\n'));
 
-/** The numbered choices of an open question, with the highlighted one and the "Other" one. */
 export function questionPanel(screen: string): QuestionPanel | undefined {
   const lines = screen.split('\n');
   const end = lines.findLastIndex(line => /enter submit/i.test(line));
@@ -462,6 +487,9 @@ export function agyQuestionScreen(screen: string): AgyQuestionPanel | undefined 
     other,
   };
 }
+
+// ── Find resume and session details ──────────────────────────────────
+// Find the Claude resume decision and the Codex session ID on its status card.
 
 /**
  * Claude Code asks "Resume this conversation?" when a conversation has been left alone for hours: option 1 reloads all of it

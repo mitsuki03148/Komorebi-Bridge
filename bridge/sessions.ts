@@ -1,3 +1,13 @@
+// Contents
+// Session records and locations — Identify saved sessions and where to find them.
+// Read saved conversations — Load the messages and details a room needs.
+// Read questions and answers — Show what the agent asked and how the user replied.
+// Read progress checklists — Show the latest recorded work steps.
+// Estimate context use — Show how much of the agent's context is in use.
+// Put messages in order — Keep room notes and saved messages in one conversation.
+// Watch session files — Refresh rooms when their files change.
+// Check working folders — Resolve room folders and check path boundaries.
+
 import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { lstat, open, readFile, readdir, realpath, stat } from 'node:fs/promises';
@@ -6,13 +16,8 @@ import type { CLIModelId, EffortLevel, PendingQuestion, TaskStep, TaskStepStatus
 import { isConversationEntry, transcriptText } from '../src/utils/transcriptText';
 import { HISTORY_DEFAULT, HISTORY_MAX } from '../src/utils/history';
 
-export const cliIds: CLIModelId[] = ['AGY', 'CODEX', 'CLAUDE'];
-export const home = homedir();
-export const sessionRoots: Record<CLIModelId, [string, string]> = {
-  AGY: ['.gemini/antigravity/brain', '.gemini/antigravity-cli/brain'],
-  CODEX: ['.codex/sessions', 'Library/Application Support/Codex'],
-  CLAUDE: ['.claude/projects', 'Library/Application Support/Claude'],
-};
+// ── Session records and locations ────────────────────────────────────
+// The Bridge uses these records and locations to match a saved conversation to its room.
 
 export interface SavedSession {
   id: string;
@@ -38,49 +43,21 @@ export interface SavedSession {
   forkedFromId?: string;
 }
 
-/**
- * How full a conversation's context is, from the token counts each CLI writes into its own record with every turn.
- * Codex records the window itself; Claude and AGY do not, so theirs is assumed from the model: Claude 5 models run a
- * 1M window, older Claude 200k, Gemini 1M. A turn that used more than the assumed window proves a bigger one.
- */
-const agyCompactionTokens = 510_000;
-export function contextOf(modelId: CLIModelId, records: any[], model?: string): number | undefined {
-  return contextUsage(modelId, records, model)?.pct;
-}
+type Row = Record<string, any>;
 
-/** The same, with the real numbers: tokens in the last turn and the window they are measured against. */
-export function contextUsage(modelId: CLIModelId, records: any[], model?: string): { pct: number; tokens: number; window: number; codexUsableWindow?: number } | undefined {
-  let tokens: number | undefined, window: number | undefined;
-  if (modelId === 'CODEX') {
-    const info = records.findLast(row => row?.type === 'event_msg' && row.payload?.type === 'token_count' && row.payload.info)?.payload?.info;
-    tokens = info?.last_token_usage?.total_tokens;
-    window = info?.model_context_window;
-  } else if (modelId === 'CLAUDE') {
-    const row = records.findLast(item => item?.type === 'assistant' && !item.isSidechain && !item.agentId && item.message?.usage && item.message.model !== '<synthetic>');
-    const usage = row?.message?.usage;
-    if (usage) {
-      tokens = (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
-      window = /^claude-(?:opus|sonnet|haiku|fable|mythos)-([5-9]|\d{2,})(?:-|$)/.test(`${row.message.model ?? model ?? ''}`) ? 1_000_000 : 200_000;
-    }
-  } else {
-    const row = records.findLast(item => item?.type === 'PLANNER_RESPONSE' && typeof item.input_tokens === 'number');
-    // AGY compacts the conversation at the top of its context window, whatever the model's own limit is, so the ring fills up there and the
-    // compaction does not arrive while it still looks nearly empty. It was about 254k until 2026-11-16; the window then opened to 512k and the
-    // compactions seen that day came at 509,644 and 510,222 tokens, so the ring measures against 510k.
-    if (row) { tokens = row.input_tokens + (row.cache_read_tokens ?? 0); window = agyCompactionTokens; }
-  }
-  if (typeof tokens !== 'number' || !Number.isFinite(tokens) || tokens <= 0 || typeof window !== 'number' || window <= 0) return undefined;
-  const codexUsableWindow = modelId === 'CODEX' && Number.isSafeInteger(window) ? window : undefined;
-  if (tokens > window && modelId !== 'AGY') window = Math.max(window, 1_000_000);
-  return { pct: Math.min(100, Math.round((tokens / window) * 100)), tokens, window, ...(codexUsableWindow !== undefined ? { codexUsableWindow } : {}) };
-}
-
-export function isInside(root: string, path: string) {
-  const suffix = relative(root, path);
-  return !isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith('..' + sep);
-}
+export const cliIds: CLIModelId[] = ['AGY', 'CODEX', 'CLAUDE'];
+export const home = homedir();
+export const sessionRoots: Record<CLIModelId, [string, string]> = {
+  AGY: ['.gemini/antigravity/brain', '.gemini/antigravity-cli/brain'],
+  CODEX: ['.codex/sessions', 'Library/Application Support/Codex'],
+  CLAUDE: ['.claude/projects', 'Library/Application Support/Claude'],
+};
 
 const uuid = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
+
+// ── Read saved conversations ─────────────────────────────────────────
+// When a room opens or loads older messages, read only as much of its saved conversation as it needs.
+
 const transcriptSize = 256 * 1024;
 /** How many recent messages a room keeps, and the most text it holds for them (older ones stay in the CLI's own record). */
 export const historyLimit = HISTORY_DEFAULT;
@@ -91,11 +68,9 @@ const historyChars = 120_000;
 const maxTranscriptWindow = 16 * 1024 * 1024;
 /** How far back a reader's own "load earlier" may go in a huge session: it is a one-off, so slower is fine. */
 export const deepTranscriptWindow = 128 * 1024 * 1024;
-export const forkRecoveryIntervalMs = 1_000;
-export const forkRecoveryLimitMs = 30_000;
+
 /** The window that was enough last time for each file, so a long session is read once per change, not in several growing steps. */
 const knownWindows = new Map<string, number>();
-type Row = Record<string, any>;
 
 function rows(text: string): Row[] {
   return text.split('\n').flatMap(line => {
@@ -107,7 +82,6 @@ function rows(text: string): Row[] {
   });
 }
 
-/** A cheap count of message rows, to know when enough of the file's end has been read. */
 /**
  * A message the user sends to Claude while it is working is not written as a user row but as an attachment of type
  * queued_command, with its text and pictures in `prompt`. It is as much a message as any other.
@@ -126,156 +100,6 @@ function messageText(content: unknown) {
   if (!Array.isArray(content)) return '';
   return content.filter(item => ['text', 'input_text', 'output_text'].includes(item?.type))
     .map(item => typeof item.text === 'string' ? item.text : '').join('\n');
-}
-
-/** The record Codex writes when it asks the user something: a message event carrying the questions. */
-const questionItem = (row: any) => row?.type === 'event_msg' && Array.isArray(row.payload?.item?.questions) && row.payload.item.questions.length > 0 ? row.payload.item : undefined;
-
-/** Claude's AskUserQuestion call in an assistant row, in the same shape as Codex's questions (a title and its choices). */
-function claudeAsked(row: any): { toolId: string; item: { questions: { title: string; options: string[] | null }[] } } | undefined {
-  if (row?.type !== 'assistant' || row.isSidechain || row.agentId || !Array.isArray(row.message?.content)) return;
-  const call = row.message.content.find((part: any) => part?.type === 'tool_use' && part.name === 'AskUserQuestion' && typeof part.id === 'string' && Array.isArray(part.input?.questions));
-  if (!call) return;
-  const questions = call.input.questions.map((question: any) => {
-    const options = Array.isArray(question?.options)
-      ? question.options.map((option: any) => typeof option === 'string' ? option : option?.label).filter((label: unknown): label is string => typeof label === 'string' && Boolean(label.trim()))
-      : [];
-    return { title: typeof question?.question === 'string' ? question.question.trim() : '', options: options.length ? options : null };
-  }).filter((question: { title: string }) => question.title);
-  return questions.length ? { toolId: call.id, item: { questions } } : undefined;
-}
-
-/** Whether a later row answers that call: Claude writes a tool result (the choice, or a refusal when the question was dismissed) for it. */
-const claudeAnswered = (rows: any[], toolId: string) => rows.some(row => row?.type === 'user' && Array.isArray(row.message?.content) &&
-  row.message.content.some((part: any) => part?.type === 'tool_result' && part.tool_use_id === toolId));
-
-/** The answers Claude recorded for that call, by question title; empty when the question was dismissed or the result has no answers. */
-function claudeAnswers(rows: any[], toolId: string): Map<string, string> {
-  const answers = new Map<string, string>();
-  const row = rows.find(item => item?.type === 'user' && Array.isArray(item.message?.content) &&
-    item.message.content.some((part: any) => part?.type === 'tool_result' && part.tool_use_id === toolId));
-  const recorded = row?.toolUseResult?.answers;
-  if (recorded && typeof recorded === 'object') {
-    for (const [title, answer] of Object.entries(recorded)) if (typeof answer === 'string' && answer.trim()) answers.set(title.trim(), answer.trim());
-  }
-  return answers;
-}
-
-/** AGY's ask_question call in a PLANNER_RESPONSE row, in the same shape as Claude's and Codex's questions. */
-export function agyAsked(row: any): { item: { questions: { title: string; options: string[] | null; multiSelect?: boolean }[] } } | undefined {
-  if (row?.type !== 'PLANNER_RESPONSE' || !Array.isArray(row.tool_calls)) return;
-  const call = row.tool_calls.find((part: any) => part?.name === 'ask_question' && Array.isArray(part.args?.questions));
-  if (!call) return;
-  const questions = call.args.questions.map((question: any) => {
-    const options = Array.isArray(question?.options)
-      ? question.options.map((option: any) => typeof option === 'string' ? option : option?.label).filter((label: unknown): label is string => typeof label === 'string' && Boolean(label.trim()))
-      : [];
-    const multiSelect = question?.is_multi_select === true || question?.multiSelect === true;
-    return {
-      title: typeof question?.question === 'string' ? question.question.trim() : '',
-      options: options.length ? options : null,
-      ...(multiSelect ? { multiSelect: true } : {}),
-    };
-  }).filter((question: { title: string }) => question.title);
-  return questions.length ? { item: { questions } } : undefined;
-}
-
-const stepStatuses: readonly TaskStepStatus[] = ['pending', 'in_progress', 'done', 'skipped', 'failed'];
-
-/** AGY's update_steps call in a PLANNER_RESPONSE row: the whole current checklist (args.steps is a JSON string, or already a list). */
-export function agySteps(row: any): TaskStep[] | undefined {
-  if (row?.type !== 'PLANNER_RESPONSE' || !Array.isArray(row.tool_calls)) return;
-  const call = [...row.tool_calls].reverse().find((part: any) => part?.name === 'update_steps');
-  if (!call) return;
-  let list: unknown = call.args?.steps;
-  if (typeof list === 'string') { try { list = JSON.parse(list); } catch { return; } }
-  if (!Array.isArray(list)) return;
-  const steps = list.flatMap((item: any): TaskStep[] => {
-    const title = typeof item?.title === 'string' ? item.title.trim().slice(0, 200) : '';
-    if (!title) return [];
-    return [{ title, status: stepStatuses.includes(item.status) ? item.status : 'pending' }];
-  }).slice(0, 50);
-  return steps.length ? steps : undefined;
-}
-
-const stepsText = (steps: TaskStep[]) => `進度 ${steps.filter(step => step.status === 'done').length}/${steps.length}`;
-
-const agyAnswerRow = (rows: any[]) => {
-  for (const row of rows) {
-    if (row?.type === 'PLANNER_RESPONSE' || row?.type === 'USER_INPUT') return undefined;
-    if (row?.type === 'GENERIC' && typeof row.content === 'string' && /^A[1-9]\d*:\s*.+$/m.test(row.content)) return row;
-  }
-  return undefined;
-};
-
-/** Whether a later row answers that AGY ask_question call: AGY writes a GENERIC row with "A1: <answer>" (or "A1: User Skipped"). */
-const agyAnswered = (rows: any[]) =>
-  Boolean(agyAnswerRow(rows)) || rows.some(row => row?.type === 'PLANNER_RESPONSE' || row?.type === 'USER_INPUT');
-
-/** The answers AGY recorded for that ask_question call, by question title; empty when the user skipped with Esc. */
-function agyAnswers(rows: any[], questions: { title: string }[]): Map<string, string> {
-  const answers = new Map<string, string>();
-  const row = agyAnswerRow(rows);
-  if (!row || typeof row.content !== 'string') return answers;
-  for (const match of row.content.matchAll(/^A([1-9]\d*):\s*(.+)$/gm)) {
-    const question = questions[Number(match[1]) - 1];
-    const answer = match[2].trim();
-    if (question && answer && !/^User Skipped$/i.test(answer)) answers.set(question.title, answer);
-  }
-  return answers;
-}
-
-/** What an answered question shows: each title with the answer that was given, and not the list of choices. */
-const answeredText = (item: { questions: { title: string }[] }, answers: Map<string, string>) =>
-  item.questions.map(question => answers.has(question.title) ? `${question.title}\n答：${answers.get(question.title)}` : question.title).join('\n\n').trim();
-
-/** What Codex shows for a question: each title with its choices under it. */
-function questionText(item: any): string {
-  const shown = Array.isArray(item.content) ? item.content.map((part: any) => typeof part?.text === 'string' ? part.text : '').join('\n').trim() : '';
-  if (shown) return shown;
-  return item.questions.map((question: any) => [String(question?.title ?? '').trim(), ...(Array.isArray(question?.options) ? question.options.map((option: unknown) => ` - ${option}`) : [])].join('\n')).join('\n\n').trim();
-}
-
-/** A question stays pending for this long; after that nobody is expected to answer it any more. */
-const questionLife = 12 * 60 * 60 * 1000;
-
-/**
- * Codex records a question it asks the user (with its choices, if any) on the message that carries it.
- * It is still waiting when no message from the user has come after it, and it is recent.
- */
-export function pendingQuestionOf(records: any[], logs: TerminalLogEntry[], now = Date.now()): PendingQuestion | undefined {
-  const row = records.findLast(item => Array.isArray(item.payload?.item?.questions) && item.payload.item.questions.length > 0);
-  const at = row ? Date.parse(row.timestamp) : NaN;
-  if (!row || !Number.isFinite(at) || now - at > questionLife) return;
-  if (logs.some(entry => entry.sender === 'user' && entryTime(entry) > at)) return;
-  const questions = row.payload.item.questions
-    .map((question: any) => ({
-      title: typeof question?.title === 'string' ? question.title.trim() : '',
-      options: Array.isArray(question?.options) ? question.options.filter((option: unknown) => typeof option === 'string' && option.trim()) : null,
-    }))
-    .filter((question: { title: string }) => question.title);
-  if (!questions.length) return;
-  return { id: new Date(at).toISOString(), questions: questions.map((question: { title: string; options: string[] | null }) => ({ ...question, options: question.options?.length ? question.options : null })) };
-}
-
-/** The AskUserQuestion Claude is waiting on: the latest one, with no answer written after it, and recent. */
-export function claudePendingQuestionOf(records: any[], now = Date.now()): PendingQuestion | undefined {
-  const index = records.findLastIndex(row => claudeAsked(row));
-  if (index < 0) return;
-  const asked = claudeAsked(records[index])!;
-  const at = Date.parse(records[index].timestamp);
-  if (!Number.isFinite(at) || now - at > questionLife || claudeAnswered(records.slice(index + 1), asked.toolId)) return;
-  return { id: new Date(at).toISOString(), questions: asked.item.questions };
-}
-
-/** The ask_question AGY is waiting on: the latest one, with no GENERIC answer row after it, and recent. */
-export function agyPendingQuestionOf(records: any[], now = Date.now()): PendingQuestion | undefined {
-  const index = records.findLastIndex(row => agyAsked(row));
-  if (index < 0) return;
-  const asked = agyAsked(records[index])!;
-  const at = Date.parse(records[index].timestamp ?? records[index].created_at);
-  if (!Number.isFinite(at) || now - at > questionLife || agyAnswered(records.slice(index + 1))) return;
-  return { id: new Date(at).toISOString(), questions: asked.item.questions };
 }
 
 export async function readSession(modelId: CLIModelId, file: string, root: string, _workspace: string, limit = historyLimit, maxWindow = maxTranscriptWindow, sessionHome = home): Promise<SavedSession | undefined> {
@@ -451,11 +275,200 @@ export async function readSession(modelId: CLIModelId, file: string, root: strin
   };
 }
 
+// ── Read questions and answers ───────────────────────────────────────
+// When a saved conversation contains a question, work out whether it is still open and what answer to show.
+
+/** A question stays pending for this long; after that nobody is expected to answer it any more. */
+const questionLife = 12 * 60 * 60 * 1000;
+
+/** The record Codex writes when it asks the user something: a message event carrying the questions. */
+const questionItem = (row: any) => row?.type === 'event_msg' && Array.isArray(row.payload?.item?.questions) && row.payload.item.questions.length > 0 ? row.payload.item : undefined;
+
+/** Claude's AskUserQuestion call in an assistant row, in the same shape as Codex's questions (a title and its choices). */
+function claudeAsked(row: any): { toolId: string; item: { questions: { title: string; options: string[] | null }[] } } | undefined {
+  if (row?.type !== 'assistant' || row.isSidechain || row.agentId || !Array.isArray(row.message?.content)) return;
+  const call = row.message.content.find((part: any) => part?.type === 'tool_use' && part.name === 'AskUserQuestion' && typeof part.id === 'string' && Array.isArray(part.input?.questions));
+  if (!call) return;
+  const questions = call.input.questions.map((question: any) => {
+    const options = Array.isArray(question?.options)
+      ? question.options.map((option: any) => typeof option === 'string' ? option : option?.label).filter((label: unknown): label is string => typeof label === 'string' && Boolean(label.trim()))
+      : [];
+    return { title: typeof question?.question === 'string' ? question.question.trim() : '', options: options.length ? options : null };
+  }).filter((question: { title: string }) => question.title);
+  return questions.length ? { toolId: call.id, item: { questions } } : undefined;
+}
+
+/** Whether a later row answers that call: Claude writes a tool result (the choice, or a refusal when the question was dismissed) for it. */
+const claudeAnswered = (rows: any[], toolId: string) => rows.some(row => row?.type === 'user' && Array.isArray(row.message?.content) &&
+  row.message.content.some((part: any) => part?.type === 'tool_result' && part.tool_use_id === toolId));
+
+/** The answers Claude recorded for that call, by question title; empty when the question was dismissed or the result has no answers. */
+function claudeAnswers(rows: any[], toolId: string): Map<string, string> {
+  const answers = new Map<string, string>();
+  const row = rows.find(item => item?.type === 'user' && Array.isArray(item.message?.content) &&
+    item.message.content.some((part: any) => part?.type === 'tool_result' && part.tool_use_id === toolId));
+  const recorded = row?.toolUseResult?.answers;
+  if (recorded && typeof recorded === 'object') {
+    for (const [title, answer] of Object.entries(recorded)) if (typeof answer === 'string' && answer.trim()) answers.set(title.trim(), answer.trim());
+  }
+  return answers;
+}
+
+const agyAnswerRow = (rows: any[]) => {
+  for (const row of rows) {
+    if (row?.type === 'PLANNER_RESPONSE' || row?.type === 'USER_INPUT') return undefined;
+    if (row?.type === 'GENERIC' && typeof row.content === 'string' && /^A[1-9]\d*:\s*.+$/m.test(row.content)) return row;
+  }
+  return undefined;
+};
+
+/** Whether a later row answers that AGY ask_question call: AGY writes a GENERIC row with "A1: <answer>" (or "A1: User Skipped"). */
+const agyAnswered = (rows: any[]) =>
+  Boolean(agyAnswerRow(rows)) || rows.some(row => row?.type === 'PLANNER_RESPONSE' || row?.type === 'USER_INPUT');
+
+/** The answers AGY recorded for that ask_question call, by question title; empty when the user skipped with Esc. */
+function agyAnswers(rows: any[], questions: { title: string }[]): Map<string, string> {
+  const answers = new Map<string, string>();
+  const row = agyAnswerRow(rows);
+  if (!row) return answers;
+  for (const match of row.content.matchAll(/^A([1-9]\d*):\s*(.+)$/gm)) {
+    const question = questions[Number(match[1]) - 1];
+    const answer = match[2].trim();
+    if (question && answer && !/^User Skipped$/i.test(answer)) answers.set(question.title, answer);
+  }
+  return answers;
+}
+
+/** What an answered question shows: each title with the answer that was given, and not the list of choices. */
+const answeredText = (item: { questions: { title: string }[] }, answers: Map<string, string>) =>
+  item.questions.map(question => answers.has(question.title) ? `${question.title}\n答：${answers.get(question.title)}` : question.title).join('\n\n').trim();
+
+/** What Codex shows for a question: each title with its choices under it. */
+function questionText(item: any): string {
+  const shown = Array.isArray(item.content) ? item.content.map((part: any) => typeof part?.text === 'string' ? part.text : '').join('\n').trim() : '';
+  if (shown) return shown;
+  return item.questions.map((question: any) => [String(question?.title ?? '').trim(), ...(Array.isArray(question?.options) ? question.options.map((option: unknown) => ` - ${option}`) : [])].join('\n')).join('\n\n').trim();
+}
+
+/** AGY's ask_question call in a PLANNER_RESPONSE row, in the same shape as Claude's and Codex's questions. */
+export function agyAsked(row: any): { item: { questions: { title: string; options: string[] | null; multiSelect?: boolean }[] } } | undefined {
+  if (row?.type !== 'PLANNER_RESPONSE' || !Array.isArray(row.tool_calls)) return;
+  const call = row.tool_calls.find((part: any) => part?.name === 'ask_question' && Array.isArray(part.args?.questions));
+  if (!call) return;
+  const questions = call.args.questions.map((question: any) => {
+    const options = Array.isArray(question?.options)
+      ? question.options.map((option: any) => typeof option === 'string' ? option : option?.label).filter((label: unknown): label is string => typeof label === 'string' && Boolean(label.trim()))
+      : [];
+    const multiSelect = question?.is_multi_select === true || question?.multiSelect === true;
+    return {
+      title: typeof question?.question === 'string' ? question.question.trim() : '',
+      options: options.length ? options : null,
+      ...(multiSelect ? { multiSelect: true } : {}),
+    };
+  }).filter((question: { title: string }) => question.title);
+  return questions.length ? { item: { questions } } : undefined;
+}
+
 /**
- * A room's own entries and the transcript's messages as one list, oldest first. Entries the transcript already
- * has (including the user's messages that were matched to it) come from the transcript; the room's own notes
- * and messages not yet written to it are kept and placed by time.
+ * Codex records a question it asks the user (with its choices, if any) on the message that carries it.
+ * It is still waiting when no message from the user has come after it, and it is recent.
  */
+export function pendingQuestionOf(records: any[], logs: TerminalLogEntry[], now = Date.now()): PendingQuestion | undefined {
+  const row = records.findLast(item => Array.isArray(item.payload?.item?.questions) && item.payload.item.questions.length > 0);
+  const at = row ? Date.parse(row.timestamp) : NaN;
+  if (!row || !Number.isFinite(at) || now - at > questionLife) return;
+  if (logs.some(entry => entry.sender === 'user' && entryTime(entry) > at)) return;
+  const questions = row.payload.item.questions
+    .map((question: any) => ({
+      title: typeof question?.title === 'string' ? question.title.trim() : '',
+      options: Array.isArray(question?.options) ? question.options.filter((option: unknown) => typeof option === 'string' && option.trim()) : null,
+    }))
+    .filter((question: { title: string }) => question.title);
+  if (!questions.length) return;
+  return { id: new Date(at).toISOString(), questions: questions.map((question: { title: string; options: string[] | null }) => ({ ...question, options: question.options?.length ? question.options : null })) };
+}
+
+/** The AskUserQuestion Claude is waiting on: the latest one, with no answer written after it, and recent. */
+export function claudePendingQuestionOf(records: any[], now = Date.now()): PendingQuestion | undefined {
+  const index = records.findLastIndex(row => claudeAsked(row));
+  if (index < 0) return;
+  const asked = claudeAsked(records[index])!;
+  const at = Date.parse(records[index].timestamp);
+  if (!Number.isFinite(at) || now - at > questionLife || claudeAnswered(records.slice(index + 1), asked.toolId)) return;
+  return { id: new Date(at).toISOString(), questions: asked.item.questions };
+}
+
+/** The ask_question AGY is waiting on: the latest one, with no GENERIC answer row after it, and recent. */
+export function agyPendingQuestionOf(records: any[], now = Date.now()): PendingQuestion | undefined {
+  const index = records.findLastIndex(row => agyAsked(row));
+  if (index < 0) return;
+  const asked = agyAsked(records[index])!;
+  const at = Date.parse(records[index].timestamp ?? records[index].created_at);
+  if (!Number.isFinite(at) || now - at > questionLife || agyAnswered(records.slice(index + 1))) return;
+  return { id: new Date(at).toISOString(), questions: asked.item.questions };
+}
+
+// ── Read progress checklists ─────────────────────────────────────────
+// When AGY records a checklist, turn it into steps and a short progress count for the room.
+
+const stepStatuses: readonly TaskStepStatus[] = ['pending', 'in_progress', 'done', 'skipped', 'failed'];
+
+const stepsText = (steps: TaskStep[]) => `進度 ${steps.filter(step => step.status === 'done').length}/${steps.length}`;
+
+/** AGY's update_steps call in a PLANNER_RESPONSE row: the whole current checklist (args.steps is a JSON string, or already a list). */
+export function agySteps(row: any): TaskStep[] | undefined {
+  if (row?.type !== 'PLANNER_RESPONSE' || !Array.isArray(row.tool_calls)) return;
+  const call = [...row.tool_calls].reverse().find((part: any) => part?.name === 'update_steps');
+  if (!call) return;
+  let list: unknown = call.args?.steps;
+  if (typeof list === 'string') { try { list = JSON.parse(list); } catch { return; } }
+  if (!Array.isArray(list)) return;
+  const steps = list.flatMap((item: any): TaskStep[] => {
+    const title = typeof item?.title === 'string' ? item.title.trim().slice(0, 200) : '';
+    if (!title) return [];
+    return [{ title, status: stepStatuses.includes(item.status) ? item.status : 'pending' }];
+  }).slice(0, 50);
+  return steps.length ? steps : undefined;
+}
+
+// ── Estimate context use ─────────────────────────────────────────────
+// When the agent records a token count, work out how full the room's context meter should be.
+
+const agyCompactionTokens = 510_000;
+export function contextOf(modelId: CLIModelId, records: any[], model?: string): number | undefined {
+  return contextUsage(modelId, records, model)?.pct;
+}
+
+/** The same, with the real numbers: tokens in the last turn and the window they are measured against. */
+export function contextUsage(modelId: CLIModelId, records: any[], model?: string): { pct: number; tokens: number; window: number; codexUsableWindow?: number } | undefined {
+  let tokens: number | undefined, window: number | undefined;
+  if (modelId === 'CODEX') {
+    const info = records.findLast(row => row?.type === 'event_msg' && row.payload?.type === 'token_count' && row.payload.info)?.payload?.info;
+    tokens = info?.last_token_usage?.total_tokens;
+    window = info?.model_context_window;
+  } else if (modelId === 'CLAUDE') {
+    const row = records.findLast(item => item?.type === 'assistant' && !item.isSidechain && !item.agentId && item.message?.usage && item.message.model !== '<synthetic>');
+    const usage = row?.message?.usage;
+    if (usage) {
+      tokens = (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+      window = /^claude-(?:opus|sonnet|haiku|fable|mythos)-([5-9]|\d{2,})(?:-|$)/.test(`${row.message.model ?? model ?? ''}`) ? 1_000_000 : 200_000;
+    }
+  } else {
+    const row = records.findLast(item => item?.type === 'PLANNER_RESPONSE' && typeof item.input_tokens === 'number');
+    // AGY compacts the conversation at the top of its context window, whatever the model's own limit is, so the ring fills up there and the
+    // compaction does not arrive while it still looks nearly empty. It was about 254k until 2026-11-16; the window then opened to 512k and the
+    // compactions seen that day came at 509,644 and 510,222 tokens, so the ring measures against 510k.
+    if (row) { tokens = row.input_tokens + (row.cache_read_tokens ?? 0); window = agyCompactionTokens; }
+  }
+  if (typeof tokens !== 'number' || !Number.isFinite(tokens) || tokens <= 0 || typeof window !== 'number' || window <= 0) return undefined;
+  const codexUsableWindow = modelId === 'CODEX' && Number.isSafeInteger(window) ? window : undefined;
+  if (tokens > window && modelId !== 'AGY') window = Math.max(window, 1_000_000);
+  return { pct: Math.min(100, Math.round((tokens / window) * 100)), tokens, window, ...(codexUsableWindow !== undefined ? { codexUsableWindow } : {}) };
+}
+
+// ── Put messages in order ────────────────────────────────────────────
+// When saved history arrives, keep room entries in order and carry over those the saved conversation does not yet have.
+
 export const entryTime = (entry: TerminalLogEntry) => (entry.createdAt ? Date.parse(entry.createdAt) : NaN);
 
 /** Puts a message where its time says, after any message from the same moment; one with no usable time goes last. */
@@ -482,6 +495,11 @@ export function inTimeOrder(list: TerminalLogEntry[]) {
   return keyed.sort((a, b) => a.key - b.key || a.position - b.position).map(item => item.entry);
 }
 
+/**
+ * A room's own entries and the transcript's messages as one list, oldest first. Entries the transcript already
+ * has (including the user's messages that were matched to it) come from the transcript; the room's own notes
+ * and messages not yet written to it are kept and placed by time.
+ */
 export function mergeHistory(current: TerminalLogEntry[], transcript: TerminalLogEntry[], matched: ReadonlySet<string> = new Set()) {
   const known = new Set(transcript.map(entry => entry.id));
   const merged = [...transcript];
@@ -495,6 +513,12 @@ export function mergeHistory(current: TerminalLogEntry[], transcript: TerminalLo
   }
   return merged;
 }
+
+// ── Watch session files ──────────────────────────────────────────────
+// While the Bridge is running, pick which files to watch and recover recent Codex sessions if a file event is missed.
+
+export const forkRecoveryIntervalMs = 1_000;
+export const forkRecoveryLimitMs = 30_000;
 
 export function isTranscript(modelId: CLIModelId, file: string, root: string) {
   const parts = relative(root, file).split(sep);
@@ -644,6 +668,14 @@ export function watchSessions(
     };
   }));
   return () => Promise.all(watchers.map(close => close()));
+}
+
+// ── Check working folders ────────────────────────────────────────────
+// Before opening a room or reading a file, use these checks to resolve real folders or test path boundaries.
+
+export function isInside(root: string, path: string) {
+  const suffix = relative(root, path);
+  return !isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith('..' + sep);
 }
 
 export async function roomDirectory(_root: string, requested: string) {

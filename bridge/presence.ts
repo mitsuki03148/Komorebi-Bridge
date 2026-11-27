@@ -1,6 +1,7 @@
 /** Tracks actual room viewers, allowing short network interruptions to recover. */
 export class RoomPresence<Client> {
   private readonly viewers = new Map<Client, Set<string>>();
+  private readonly drafts = new Map<Client, Set<string>>();
   private readonly unknown = new Set<Client>();
   private readonly deferred = new Set<string>();
   private readonly waitingIdle = new Set<string>();
@@ -15,7 +16,7 @@ export class RoomPresence<Client> {
   private graceFor(roomId: string) { return typeof this.graceMs === 'function' ? this.graceMs(roomId) : this.graceMs; }
 
   hasViewers(roomId: string) {
-    return [...this.viewers.values()].some(rooms => rooms.has(roomId));
+    return [...this.viewers.values(), ...this.drafts.values()].some(rooms => rooms.has(roomId));
   }
 
   considerUnviewed(roomId: string) {
@@ -48,17 +49,33 @@ export class RoomPresence<Client> {
   view(client: Client, roomId: string | null) { this.viewMany(client, roomId ? [roomId] : []); }
 
   viewMany(client: Client, roomIds: string[]) {
-    const previous = this.viewers.get(client) ?? new Set<string>();
+    const previous = this.clientRooms(client);
     const next = new Set(roomIds);
     if (next.size) this.viewers.set(client, next);
     else this.viewers.delete(client);
+    this.viewsChanged(previous, this.clientRooms(client));
+    this.resolveUnknown(client);
+  }
+
+  /** Only room IDs are sent; draft contents stay in the browser. */
+  draftMany(client: Client, roomIds: string[]) {
+    const previous = this.clientRooms(client);
+    if (roomIds.length) this.drafts.set(client, new Set(roomIds));
+    else this.drafts.delete(client);
+    this.viewsChanged(previous, this.clientRooms(client));
+  }
+
+  private clientRooms(client: Client) {
+    return new Set([...(this.viewers.get(client) ?? []), ...(this.drafts.get(client) ?? [])]);
+  }
+
+  private viewsChanged(previous: Set<string>, next: Set<string>) {
     for (const roomId of next) {
       this.clock.clearTimeout(this.timers.get(roomId));
       this.timers.delete(roomId);
       this.deferred.delete(roomId);
       this.waitingIdle.delete(roomId);
     }
-    this.resolveUnknown(client);
     for (const roomId of previous) if (!next.has(roomId) && !this.hasViewers(roomId)) this.schedule(roomId);
     this.onViewChange?.();
   }
@@ -92,12 +109,13 @@ export class RoomPresence<Client> {
     if (idle) this.idle(roomId);
   }
 
-  disconnect(client: Client) { this.view(client, null); }
+  disconnect(client: Client) { this.draftMany(client, []); this.view(client, null); }
 
   dispose() {
     for (const timer of this.timers.values()) this.clock.clearTimeout(timer);
     this.timers.clear();
     this.viewers.clear();
+    this.drafts.clear();
     this.unknown.clear();
     this.deferred.clear();
     this.waitingIdle.clear();

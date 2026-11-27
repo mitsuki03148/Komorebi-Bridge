@@ -146,22 +146,21 @@ test('the group conversation sits on the same conservatory background as a singl
     name: '測試', members: [{ roomId: 'a', modelId: 'CODEX', room }], characters: INITIAL_CHARACTERS, onBack() {}, onSend() {}, onDecision() {}, onMenu() {},
   }));
   assert.match(html, /<img src="[^"]+" alt="" [^>]*opacity-35/);
-  assert.match(html, /from-\[#FBF8F3\]\/85/);
+  assert.match(html, /from-\[#FBF8F3\]\/42/);
   assert.match(html, /<div[^>]*class="relative z-10 min-h-0 flex-1[^"]*"[^>]*aria-label="群組對話"/);
 });
 
-test('the panel under the conversation is 50% see-through on Mac/group and a frosted full-width dock on phone', async () => {
+test('the bottom area floats over the single background with no opaque slab on phone, Mac, and group rooms', async () => {
   const { readFile } = await import('node:fs/promises');
   const workspaceSource = await readFile(new URL('../src/components/RightRoomWorkspace.tsx', import.meta.url), 'utf8');
-  const wsLine = workspaceSource.split('\n').find(text => text.includes('bg-[#F7F2E9]/50'));
-  assert.ok(wsLine, 'RightRoomWorkspace keeps the composer panel semi-transparent');
-  assert.doesNotMatch(wsLine!, /backdrop-blur/, 'RightRoomWorkspace: a blur would hide the picture behind the panel');
-  // Spec change (瞳's A1+B2 full-width bottom dock): phone uses a rounded frosted dock in both single and group rooms.
+  const wsLine = workspaceSource.split('\n').find(text => text.includes('relative z-10 px-5 py-2.5 bg-transparent'));
+  assert.ok(wsLine, 'RightRoomWorkspace floats the composer transparently over the background');
+  assert.doesNotMatch(wsLine!, /backdrop-blur/, 'RightRoomWorkspace: no opaque blur slab hiding the background');
   const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
-  assert.match(appSource, /rounded-t-\[24px\] bg-\[#FBF8F3\]\/82[^"]*backdrop-blur-xl/);
+  assert.match(appSource, /bg-gradient-to-t from-\[#FBF8F3\]\/45 via-\[#FBF8F3\]\/14 to-transparent/);
   const room = { id: 'a', modelId: 'CODEX', roomName: 'a', live: true, ready: true, status: 'idle', remoteControl: {}, logs: [] } as unknown as TerminalRoom;
   const html = renderToStaticMarkup(createElement(GroupChatView, { name: '測試', members: [{ roomId: 'a', modelId: 'CODEX', room }], characters: INITIAL_CHARACTERS, onBack() {}, onSend() {}, onDecision() {}, onMenu() {} }));
-  assert.match(html, /rounded-t-\[24px\] border-t border-\[#E6DCD0\]\/80 bg-\[#FBF8F3\]\/82[^"]*sm:bg-\[#F7F2E9\]\/50/);
+  assert.match(html, /relative z-10 shrink-0 space-y-1\.5 bg-transparent/);
 });
 
 test('the composers have no slash button', async () => {
@@ -177,7 +176,7 @@ test('the group shows who leads it, lets the Founder name another lead, and a ro
   const agy = { id: 'agy', modelId: 'AGY', roomName: 'Bridge', sessionId: '22222222-2222-2222-2222-222222222222', logs: [] } as unknown as TerminalRoom;
   const members = [claude, agy].map(room => ({ roomId: room.id, modelId: room.modelId, room }));
   const view = (leadRoomId: string) => renderToStaticMarkup(createElement(GroupChatView, {
-    name: '測試', members, characters: INITIAL_CHARACTERS, recipientId: 'claude', orchestratorRoomId: leadRoomId, onSetOrchestrator() {},
+    name: '測試', members, characters: INITIAL_CHARACTERS, recipientId: 'claude', orchestratorRoomId: leadRoomId,
     onBack() {}, onSend() {}, onDecision() {}, onMenu() {},
   }));
   assert.doesNotMatch(view('agy'), /設為總指揮/, 'orchestrator assignment lives in the member long-press menu, not duplicated in the ⋯ menu');
@@ -196,7 +195,6 @@ test('the group shows who leads it, lets the Founder name another lead, and a ro
   const app = await readFile('src/App.tsx', 'utf8');
   assert.match(app, /type: 'SET_SUCCESSOR', roomId: menuRoom\.id, successorRoomId: room\.id/);
   assert.match(app, /type: 'SET_SUCCESSOR', roomId: menuRoom\.id, successorRoomId: null/);
-  assert.match(app, /type: 'GROUP_SET_ORCHESTRATOR', groupId: selectedGroup\.id, roomId/);
 });
 
 test('the room menu of a group member offers "move out of the group" instead of archive, and copies the Session ID from an icon on its banner', async () => {
@@ -226,8 +224,8 @@ test('taking the last member out of a group asks to delete the group instead of 
   assert.equal(zh['group.remove.confirm'], '將「{room}」移出群組？原有 CLI 房間和對話會保留。');
   assert.match(fn, /group\.members\.length <= 1[\s\S]*confirm\(\{[\s\S]*t\('group\.remove\.last\.confirm'[\s\S]*type: 'GROUP_DELETE', groupId: group\.id/);
   assert.match(fn, /confirm\(\{[\s\S]*t\('group\.remove\.confirm'[\s\S]*type: 'GROUP_REMOVE_MEMBER', groupId: group\.id, roomId/);
-  assert.match(app, /onRemoveMember=\{roomId => \{ void removeFromGroup\(selectedGroup, roomId\); \}\}/, 'the group view uses the same function');
-  assert.doesNotMatch(await readFile('src/components/GroupChat.tsx', 'utf8'), /onRemoveMember && members\.length > 1/, 'the button is no longer hidden for the last member');
+  assert.match(app, /data-remove-from-group onClick=\{async \(\) => \{ if \(await removeFromGroup\(menuGroup, menuRoom\.id\)\) setMenuRoomId\(null\); \}\}/, 'the room menu uses that confirmation path');
+  assert.doesNotMatch(await readFile('src/components/GroupChat.tsx', 'utf8'), /\bon(?:RemoveMember|SetOrchestrator)\b/, 'the group view no longer declares either menu action');
 });
 
 test('the room menu title carries a crown: lit for the current lead, tapping assigns or unassigns it', async () => {

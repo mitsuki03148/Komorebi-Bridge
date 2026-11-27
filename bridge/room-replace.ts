@@ -1,3 +1,10 @@
+// Room replacement and working-folder moves.
+// Contents:
+// - AGY metadata and conversation forks
+// - Folder validation and Claude memory
+// - Replace a stale room and hand over its work
+// - Move a room and adopt its session
+
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { copyFile, cp, mkdir, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
@@ -8,6 +15,7 @@ import { pathToFileURL } from 'node:url';
 import type { GroupChat, TerminalRoom } from '../src/types/guild';
 import { partyName, type Bench, type BenchParty } from './bench';
 
+// AGY metadata and conversation forks: copy a conversation and update its identity and folder.
 const validUuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 function encodeVarint(value: number): Buffer {
@@ -271,6 +279,7 @@ export async function forkAgyConversation(
   }
 }
 
+// Folder validation and Claude memory: check the destination and optionally copy its memory files.
 /** Maps a working folder path to the folder name Claude uses under `~/.claude/projects/`. */
 export const claudeProjectSlug = (folder: string) => folder.replace(/[^a-zA-Z0-9]/g, '-');
 
@@ -345,6 +354,7 @@ export async function copyClaudeMemory(
   return { copied, skipped, missing: false };
 }
 
+// Replace a stale room and hand over its work: preserve group membership and pending tickets.
 /**
  * A Claude room that was left alone for hours stops at "Resume this conversation?" and nothing moves until someone answers.
  * A member of a group (not its lead) is replaced instead: a new room with the same name, folder, model and effort takes its seat,
@@ -458,6 +468,7 @@ export async function replaceStaleRoom(deps: ReplaceDeps, old: TerminalRoom): Pr
   return { replaced: true, room, moved };
 }
 
+// Move a room and adopt its session: fork into the destination and bind its new identity.
 export interface MoveRoomDeps {
   workspace: string;
   claudeProjectsRoot?: string;

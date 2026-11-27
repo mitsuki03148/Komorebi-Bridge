@@ -20,7 +20,8 @@ test('the Codex model list takes listed models only, and keeps the efforts the p
   assert.throws(() => codexModelsFromCache('{}'))
 })
 
-test('a model Codex adds to its cache reaches the picker on the next round, without a Bridge restart', async () => {
+test('a model Codex adds to its cache reaches the picker on the next round, without a Bridge restart', async t => {
+  const log = t.mock.method(console, 'error', () => {});
   const home = await mkdtemp(join(tmpdir(), 'codex-models-'))
   const before = process.env.CODEX_HOME
   process.env.CODEX_HOME = home
@@ -45,6 +46,13 @@ test('a model Codex adds to its cache reaches the picker on the next round, with
     await refresh()
     assert.deepEqual(rooms.characters.CODEX.availableSubModels, ['gpt-6.2-sol', 'gpt-6.1-sol'], 'a half-written file keeps the last good list')
     assert.equal(updates().length, 2)
+    assert.equal(log.mock.callCount(), 0, 'missing and half-written caches are expected')
+    await writeFile(join(home, 'models_cache.json'), '{}')
+    await refresh()
+    await refresh()
+    assert.deepEqual(rooms.characters.CODEX.availableSubModels, ['gpt-6.2-sol', 'gpt-6.1-sol'])
+    assert.equal(updates().length, 2, 'an invalid catalogue does not replace the current one')
+    assert.deepEqual(log.mock.calls.map(call => call.arguments), [['無法刷新 Codex 模型目錄', 'TypeError']])
   } finally {
     if (before === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = before
     await rm(home, { recursive: true, force: true })

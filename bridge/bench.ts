@@ -1,14 +1,33 @@
+// Contents
+// Ticket records and limits
+// Saved state and wake reservations
+// Workbench
+//   Open, save and retire records
+//   Restore context after 瞳 compacts
+//   Schedule RSI reviews
+//   Track stalled tickets
+//   Look up routing and delivery history
+//   Create tickets and record checkout results
+//   Read and deliver tickets
+//   Complete or cancel tickets
+//   Reserve and acknowledge wakes
+//   Find checkouts and manage claims
+// Format tickets, wakes and hook replies
+
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import type { CLIModelId, GroupChat, TerminalRoom } from '../src/types/guild';
 import type { BenchRoutingError, RoleRouteReceipt } from '../src/types/bridge';
 import { readExperience, readExperienceInput } from './bench-experience';
+import type { CheckoutCompletion } from './bench-completion';
 
 /**
- * Each agent's own workbench (inbox) inside a group: another member writes a ticket into it, and only its owner reads it.
  * The Bridge keeps them; the agent gets them through a hook while it works, or a short wake-up message while it is idle.
  * See Review/WORKBENCH/PLAN.md.
  */
+
+// ── Ticket records and limits ──
+// Define the records shared with callers and the limits applied to them.
 
 export interface BenchParty { sessionId: string; roomName: string; modelId: CLIModelId }
 export interface BenchSystem { system: 'rsi-tidy'; sessionId?: never }
@@ -42,6 +61,7 @@ export interface Ticket {
   doneAt?: string;
   note?: string;
   receiptProof?: ReceiptProof;
+  completion?: CompletionEvidence;
   route?: RoleRouteReceipt;
   /** Snapshotted by the Bridge. Related replies/done notices keep exact endpoints but do not participate in rotation. */
   fixed?: { fromRoomId: string; toRoomId: string };
@@ -64,7 +84,14 @@ export interface Ticket {
 }
 
 /** What the Bridge saw at the receipt path when the ticket was finished, so a later deletion can be told apart from "never there". */
-export interface ReceiptProof { path: string; at: string; state: 'file' | 'dir' | 'missing'; bytes?: number; sha256?: string }
+export interface ReceiptProof { path: string; at: string; state: 'file' | 'dir' | 'missing' | 'unreadable'; bytes?: number; sha256?: string }
+
+/** The saved notice keeps its own evidence even if its original ticket retires first. */
+type CompletionEvidence = {
+  checkout?: CheckoutCompletion;
+  receipt?: ReceiptProof;
+  closeout?: string[];
+};
 
 export type AcceptanceResult = 'PASS' | 'FAIL' | 'SKIP' | 'TIMEOUT' | 'CRASH' | 'ABORTED';
 export type BenchCancellation = 'sender' | 'lead_final_report';
@@ -74,13 +101,7 @@ export type SavedBenchChange =
   | { kind: 'completed'; ticket: Ticket; late: boolean; checked?: AcceptanceResult }
   | { kind: 'cancelled'; ticket: Ticket; by: BenchCancellation };
 
-type NewTicket = { groupId: string; from: BenchParty; to: BenchParty; title?: string; body: string; kind?: TicketKind; source?: 'verify-gate'; purpose?: Ticket['purpose']; replyTo?: number; repo?: string; ref?: string; boundary?: string; receipt?: string; route?: RoleRouteReceipt; fixed?: Ticket['fixed']; worktree?: Ticket['worktree'] };
-
-export function proofText(proof: ReceiptProof) {
-  if (proof.state === 'missing') return `⚠ 完成時 ${proof.path} 已經唔存在，請補返 evidence`;
-  const size = proof.bytes === undefined ? '' : proof.bytes >= 1_048_576 ? `${(proof.bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(proof.bytes / 1024))} KB`;
-  return `完成時存在（${proof.state === 'dir' ? '目錄' : size}${proof.sha256 ? `，sha256 ${proof.sha256.slice(0, 12)}…` : ''}）：${proof.path}`;
-}
+type NewTicket = { groupId: string; from: BenchParty; to: BenchParty; title?: string; body: string; kind?: TicketKind; source?: 'verify-gate'; purpose?: Ticket['purpose']; replyTo?: number; repo?: string; ref?: string; boundary?: string; receipt?: string; route?: RoleRouteReceipt; fixed?: Ticket['fixed']; worktree?: Ticket['worktree']; completion?: CompletionEvidence };
 
 export interface Claim { id: string; groupId: string; by: BenchParty; scope: string; at: string }
 
@@ -89,7 +110,7 @@ export const benchLimits = {
   hops: 10,
   /** Wake-up messages one member may get in an hour; past that, tickets wait for its hook or for the Founder. */
   pingsPerHour: 60,
-  /** A message this short goes in full in the wake-up message itself; a longer one only by title. */
+  /** Maximum combined length of the ticket body and completion text in a non-Codex wake. */
   shortChars: 300,
   title: 120,
   body: 20_000,
@@ -119,6 +140,9 @@ export class BenchError extends Error {
 }
 
 const clean = (value: unknown, max: number) => typeof value === 'string' ? value.replace(/\r\n?/g, '\n').trim().slice(0, max) : '';
+
+// ── Saved state and wake reservations ──
+// Keep saved records separate from the in-memory holds used while delivering a wake.
 
 function isSavedStamp(value: unknown) {
   if (typeof value !== 'string') return false;
@@ -151,7 +175,13 @@ type ReservedPing = {
   timer?: ReturnType<typeof setTimeout>;
 };
 
+// ── Workbench ──
+// Load and update the ticket store used by the Bridge.
+
 export class Bench {
+  // ── Open, save and retire records ──
+  // Recover the last committed state and keep the file bounded.
+
   private data: Saved = { next: 1, tickets: [], claims: [], pings: {} };
   private readonly reservedPings = new Map<string, ReservedPing>();
   onRecoveryChange?: () => void;
@@ -286,6 +316,9 @@ export class Bench {
   /** The Bridge's clock, so a caller measuring ticket age uses the same time. */
   time() { return this.now(); }
 
+  // ── Restore context after 瞳 compacts ──
+  // Save each new checkpoint before asking the hook to restore context.
+
   /**
    * The first observation only establishes a baseline, so a checkpoint before that observation can be missed.
    * Saving before the hook reply prevents duplicates; a lost reply after saving can miss that injection.
@@ -299,6 +332,9 @@ export class Bench {
     try { this.save(); } catch { this.data.agyCheckpoints = before; return false; }
     return previous !== undefined;
   }
+
+  // ── Schedule RSI reviews ──
+  // Track eligible material and open a review when the configured group is due.
 
   private activeTidyState(): TidyState | undefined {
     if (!this.tidyGroup) return;
@@ -336,7 +372,7 @@ export class Bench {
     return true;
   }
 
-  /** Only the Bridge calls this after verifying the opted-in group's current lead. */
+  /** The Bridge supplies the group's Debug member, or its lead when the group has no Debug member. */
   dispatchTidy(groupId: string, to: BenchParty, toRoomId: string): Ticket | undefined {
     if (!this.ready() || !this.tidyEnabled(groupId)) return;
     let state = this.activeTidyState();
@@ -392,7 +428,9 @@ export class Bench {
     return ticket;
   }
 
-  /** The recipient was reminded about these open tasks. */
+  // ── Track stalled tickets ──
+  // Record reminders and escalations so the Bridge can avoid repeating them.
+
   recordNudge(ids: number[]) {
     for (const id of ids) {
       const ticket = this.get(id);
@@ -410,7 +448,19 @@ export class Bench {
     this.save();
   }
 
+  // ── Look up routing and delivery history ──
+  // Find tickets, recent replies, role recipients and saved verify-gate result paths.
+
   get(id: number) { return this.data.tickets.find(ticket => ticket.id === id); }
+
+  /** A verify-gate worker posts its saved result path as a workbench self-notice. */
+  gateResultPaths(keys: string[]) {
+    return this.data.tickets.flatMap(ticket => {
+      if (ticket.kind !== 'notice' || ticket.from.sessionId !== ticket.to.sessionId || !keys.includes(ticket.to.sessionId)) return [];
+      const match = /^verify-gate (?:PASS|FAIL)；[\s\S]*；結果：(.+)$/.exec(ticket.body);
+      return match ? [match[1]] : [];
+    });
+  }
 
   /** A recipient can report progress on a specific task without closing it. */
   lastRecipientReply(task: Ticket) {
@@ -422,6 +472,9 @@ export class Bench {
   lastRoleRoom(groupId: string, roleKey: string) {
     return this.data.tickets.findLast(ticket => ticket.kind === 'task' && ticket.groupId === groupId && ticket.route?.roleKey === roleKey)?.route?.selectedRoomId;
   }
+
+  // ── Create tickets and record checkout results ──
+  // Hold delivery until a requested worktree is ready.
 
   /** Write a ticket into the recipient's workbench. */
   send(input: NewTicket): Ticket {
@@ -466,6 +519,7 @@ export class Bench {
       ...(input.route ? { route: input.route } : {}),
       ...(input.fixed ? { fixed: input.fixed } : {}),
       ...(input.worktree ? { worktree: input.worktree } : {}),
+      ...(input.completion ? { completion: input.completion } : {}),
       ...Object.fromEntries((['repo', 'ref', 'boundary', 'receipt'] as const).flatMap(key => clean(input[key], benchLimits.field) ? [[key, clean(input[key], benchLimits.field)]] : [])),
     };
     const previous = this.data;
@@ -481,6 +535,14 @@ export class Bench {
       throw error;
     }
     return ticket;
+  }
+
+  // ── Read and deliver tickets ──
+  // List work, record delivery and transfer unfinished tickets when a member changes rooms.
+
+  /** Retained tasks include completed notifications needed for duplicate checks. */
+  tasks(groupId: string) {
+    return this.data.tickets.filter(ticket => ticket.groupId === groupId && ticket.kind === 'task');
   }
 
   /** The recipient's tickets it has not finished, oldest first, and the completion notes it has not read. */
@@ -548,14 +610,17 @@ export class Bench {
     if (ticket.kind === 'notice') { ticket.status = 'done'; ticket.doneAt = ticket.seenAt; }
   }
 
+  // ── Complete or cancel tickets ──
+  // Save the state change together with any notice it produces.
+
   /** The recipient finishes a ticket; the sender gets a completion note in its own workbench (unless it was one already). */
-  done(id: number, by: string, note?: string, receipt?: string, proof?: ReceiptProof, checked?: AcceptanceResult, remindLeadToClose = false): { ticket: Ticket; notice?: Ticket } {
+  done(id: number, by: string, note?: string, receipt?: string, proof?: ReceiptProof, checked?: AcceptanceResult, completion?: Omit<CompletionEvidence, 'receipt'>): { ticket: Ticket; notice?: Ticket } {
     this.ready();
     const ticket = this.get(id);
     if (!ticket) throw new BenchError(`找不到工單 #${id}。`);
     if (ticket.to.sessionId !== by) throw new BenchError(`工單 #${id} 不是派給你的。`);
     if (ticket.worktree?.state === 'pending' || ticket.worktree?.state === 'failed') throw new BenchError(`工單 #${id} 的 worktree 尚未準備好。`);
-    // A notice closes itself when it is read; closing it by hand is harmless and changes nothing.
+    // A manual close marks an unread notice as seen and done without generating a second notice.
     if (ticket.kind === 'notice') { if (ticket.status !== 'done') { this.see(ticket); this.save(); } return { ticket }; }
     if (ticket.cancelledAt) throw new BenchError(`工單 #${id} 已被派單方取消，毋須再做。${ticket.note ? `（${ticket.note}）` : ''}`);
     if (ticket.status === 'done' && !ticket.expiredAt) throw new BenchError(`工單 #${id} 已完成。`);
@@ -577,12 +642,13 @@ export class Bench {
         title: `#${ticket.id} 已完成：${ticket.title}`.slice(0, benchLimits.title),
         body: [
           `#${ticket.id}「${ticket.title}」已完成。`,
-          remindLeadToClose && '收尾提示：本群最後一張主工單已回。請核對結果同現有待辦。齊料就整理 HANDOFF，核對文員回執（如適用），交正式回報同下一步。若只完成一項 Inbox 交接，請在 Evidence 附 HANDOFF 路徑，末行寫 INBOX — DONE。',
+          completion?.closeout && '收尾提示：本群最後一張主工單已回。請核對結果同現有待辦。齊料就整理 HANDOFF，核對文員回執（如適用），交正式回報同下一步。若只完成一項 Inbox 交接，請在 Evidence 附 HANDOFF 路徑，末行寫 INBOX — DONE。',
           ticket.note && `結果：${ticket.note}`,
           ticket.receipt && `回報位置：${ticket.receipt}`,
           ticket.receiptProof && proofText(ticket.receiptProof),
         ].filter(Boolean).join('\n'),
         ...(ticket.receipt ? { receipt: ticket.receipt } : {}),
+        completion: { ...completion, receipt: ticket.receiptProof },
         ...(ticket.fixed ? { fixed: { fromRoomId: ticket.fixed.toRoomId, toRoomId: ticket.fixed.fromRoomId } } : {}),
       }, ticket.kind === 'task' ? { kind: 'completed', ticket, late: Boolean(previous.expiredAt), checked } : undefined);
       return { ticket, notice };
@@ -624,6 +690,9 @@ export class Bench {
       throw error;
     }
   }
+
+  // ── Reserve and acknowledge wakes ──
+  // Count recent wakes and prevent two delivery attempts from owning the same ticket.
 
   private forgetPing(id: string) {
     const ping = this.reservedPings.get(id);
@@ -725,6 +794,9 @@ export class Bench {
     this.save();
   }
 
+  // ── Find checkouts and manage claims ──
+  // List a group’s open work, active claims and the worktrees a room can use.
+
   lastWorktree(roomId: string) {
     if (!this.data.worktrees || !Object.hasOwn(this.data.worktrees, roomId)) return undefined;
     const saved = this.data.worktrees[roomId];
@@ -790,6 +862,9 @@ export class Bench {
   }
 }
 
+// ── Format tickets, wakes and hook replies ──
+// Present routing and completion evidence in the form the recipient’s CLI expects.
+
 const roleName: Record<CLIModelId, string> = { AGY: '瞳', CODEX: '光', CLAUDE: '響' };
 
 export function routeQuotaText({ hp, mp }: Pick<RoleRouteReceipt, 'hp' | 'mp'>) {
@@ -805,8 +880,29 @@ export function roleReceipt(ticket: Ticket) {
 }
 export const partyName = (party: BenchSender) => isSystemSender(party) ? 'Bridge' : `${roleName[party.modelId]} · ${party.roomName}`;
 
+export function proofText(proof: ReceiptProof) {
+  if (proof.state === 'missing') return `⚠ 完成時 ${proof.path} 已經唔存在，請補返 evidence`;
+  if (proof.state === 'unreadable') return `⚠ 完成時 ${proof.path} 讀唔到，請核對 evidence`;
+  const size = proof.bytes === undefined ? '' : proof.bytes >= 1_048_576 ? `${(proof.bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(proof.bytes / 1024))} KB`;
+  return `完成時存在（${proof.state === 'dir' ? '目錄' : size}${proof.sha256 ? `，sha256 ${proof.sha256.slice(0, 12)}…` : ''}）：${proof.path}`;
+}
+
+function completionLines(ticket: Ticket, showCloseout: boolean) {
+  const evidence = ticket.completion;
+  if (!evidence) return [];
+  const { checkout, receipt, closeout } = evidence;
+  const gate = checkout?.gate;
+  const gateResult = gate
+    ? `${gate.verdict}${gate.count ? ' ' + gate.count : ''}${gate.head === checkout.head ? '' : '（HEAD 不同）'}${gate.dirty ? '（驗證時工作樹有變更）' : ''}`
+    : 'UNKNOWN';
+  return [
+    `自動核對：HEAD ${checkout?.head ?? 'UNKNOWN'}｜${checkout?.pushed === undefined ? '推送 UNKNOWN' : checkout.pushed ? '已推' : '未推'}｜未 commit ${checkout?.changed === undefined ? 'UNKNOWN' : checkout.changed + ' 個檔'}｜gate ${gateResult}｜receipt ${receipt?.sha256 ? 'sha256 ' + receipt.sha256 : 'UNKNOWN'}`,
+    ...(showCloseout && closeout ? ['仍未完成嘅派單：', ...(closeout.length ? closeout : ['冇。'])] : []),
+  ];
+}
+
 /** How a ticket reads to the agent that receives it: who, what, where, its limits and how to answer. */
-export function ticketText(ticket: Ticket, tool: string) {
+export function ticketText(ticket: Ticket, tool: string, showCloseout = true) {
   const me = ticket.to.sessionId;
   const details = [
     ticket.repo && `repo：${ticket.repo}`, ticket.ref && `ref：${ticket.ref}`,
@@ -820,6 +916,7 @@ export function ticketText(ticket: Ticket, tool: string) {
     ...(details ? [details] : []),
     ...(ticket.worktree?.state === 'ready' ? ['已準備獨立 worktree，agent 須按路徑進入；非強制隔離。'] : []),
     ticket.body,
+    ...completionLines(ticket, showCloseout),
   ];
   if (ticket.kind === 'done') {
     lines.push(`（只係通知，唔使回覆。標為已讀：${tool} bench done ${ticket.id} --from ${me}）`);
@@ -839,7 +936,7 @@ export function ticketText(ticket: Ticket, tool: string) {
 
 /** Codex's wake is a one-line notification. Its hook or bench show reads the saved ticket. */
 export function pingCarriesTicket(ticket: Ticket) {
-  return ticket.to.modelId !== 'CODEX' && ticket.body.length <= benchLimits.shortChars;
+  return ticket.to.modelId !== 'CODEX' && ticket.body.length + completionLines(ticket, true).join('\n').length <= benchLimits.shortChars;
 }
 
 export function pingText(ticket: Ticket, tool: string) {

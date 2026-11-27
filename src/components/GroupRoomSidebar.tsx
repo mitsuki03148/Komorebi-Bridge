@@ -1,3 +1,9 @@
+// Contents
+// Identify groups and rooms
+// Show ticket transfers
+// Show member avatars and badges
+// Render the group sidebar
+
 import { useT } from '../i18n/useLang';
 import { roomStatusLabel } from '../utils/roomUi';
 import { WorkingSpark } from './WorkingIndicator';
@@ -11,6 +17,15 @@ import { memberRoleLabel } from './GroupMemberRoleEditor';
 import { groupRoleIcons } from './groupRoleIcons';
 import { isRoomPinned } from './RoomPin';
 
+// Identify groups and rooms
+// The group icon shows which models are present, and the lead heads the member list.
+const roomStatus = roomStatusLabel;
+
+/** The lead (the crown) always comes first; the others keep the order they were added in. */
+export function crownFirst<T extends { roomId: string }>(members: T[], leaderRoomId?: string): T[] {
+  const lead = leaderRoomId ? members.find(member => member.roomId === leaderRoomId) : undefined;
+  return lead ? [lead, ...members.filter(member => member !== lead)] : members;
+}
 
 function GroupAvatar({ group }: { group: GroupChat }) {
   const present = new Set(group.members.map(member => member.modelId));
@@ -37,8 +52,8 @@ function GroupAvatar({ group }: { group: GroupChat }) {
   );
 }
 
-const roomStatus = roomStatusLabel;
-
+// Show ticket transfers
+// Workbench events drive the overlays on the member avatars.
 /** One ticket on its way: a heart leaves the room that sent it and another lands on the room that got it. */
 export interface BenchFlow { id: number; from: string; to: string; kind: 'task' | 'done' }
 
@@ -50,7 +65,6 @@ function Flower({ done, color }: { done: boolean; color: string }) {
   </svg>;
 }
 
-/** The flowers over a member's icon: leaving when it sent, landing when it received (a green one when work came back done). */
 function Hearts({ roomId, flows, modelOf }: { roomId: string; flows: BenchFlow[]; modelOf: (roomId: string) => CLIModelId | undefined }) {
   const mine = flows.filter(flow => flow.from === roomId || flow.to === roomId);
   if (!mine.length) return null;
@@ -61,6 +75,8 @@ function Hearts({ roomId, flows, modelOf }: { roomId: string; flows: BenchFlow[]
   })}</>;
 }
 
+// Show member avatars and badges
+// Both layouts use the same avatar to show activity, pending decisions, leadership and assigned roles.
 const ROLE_BADGE_TONE: Partial<Record<GroupRolePreset, { Icon: typeof Wrench; tone: string }>> = {
   debug: {
     Icon: Bug,
@@ -158,17 +174,13 @@ function MemberAvatar({ member, room, character, working, flows, modelOf, size =
   </span>;
 }
 
+// Render the group sidebar
+// The compact strip shows the current group's members, while the wide sidebar also lists groups.
 const memberCardTone: Record<CLIModelId, { idle: string; active: string }> = {
   AGY: { idle: 'border-[#EBC5CA] bg-[#FFF9FA] text-[#5C3A47] dark:border-[#49324B] dark:bg-[#221A2A] dark:text-[#E7C6CE]', active: 'border-[#AD5E7E] bg-[#F8E1EB] text-[#71364E] ring-2 ring-inset ring-[#AD5E7E] shadow-sm dark:border-[#D67C8E] dark:bg-[#382336] dark:text-[#FADCE4]' },
   CODEX: { idle: 'border-[#B8D4BE] bg-[#F7FBF7] text-[#35523A] dark:border-[#2E4440] dark:bg-[#192424] dark:text-[#B9D9BF]', active: 'border-[#6F9778] bg-[#E8F1E7] text-[#3B5940] ring-2 ring-inset ring-[#6F9778] shadow-sm dark:border-[#7FA889] dark:bg-[#223531] dark:text-[#D5EEDB]' },
   CLAUDE: { idle: 'border-[#BDD0E4] bg-[#F7F9FD] text-[#364B6E] dark:border-[#343C60] dark:bg-[#1B2036] dark:text-[#C1CAEE]', active: 'border-[#7891B8] bg-[#E8EDF9] text-[#3D5378] ring-2 ring-inset ring-[#7891B8] shadow-sm dark:border-[#8488C4] dark:bg-[#282F54] dark:text-[#E1E6FC]' },
 };
-
-/** The lead (the crown) always comes first; the others keep the order they were added in. */
-export function crownFirst<T extends { roomId: string }>(members: T[], leaderRoomId?: string): T[] {
-  const lead = leaderRoomId ? members.find(member => member.roomId === leaderRoomId) : undefined;
-  return lead ? [lead, ...members.filter(member => member !== lead)] : members;
-}
 
 export function GroupRoomSidebar({ onAddMember, groups, rooms, characters, selectedGroupId, selectedRoomId, onSelectGroup, onSelectRoom, compact = false, working = {}, flows = [], showMemberRoles = false, protectedKeys = [] }: {
   groups: GroupChat[];
@@ -203,8 +215,6 @@ export function GroupRoomSidebar({ onAddMember, groups, rooms, characters, selec
     });
     const assignment = showMemberRoles && member.role ? memberRoleLabel(member.role, t) : '';
     const label = assignment ? `${baseLabel} · ${t('group.memberRole.label')}: ${assignment}` : baseLabel;
-    const roleBadge = assignment && <span data-member-assignment aria-hidden="true"
-      className="min-w-0 max-w-[5.5rem] shrink-0 truncate rounded-md border border-current/20 px-1 font-medium text-[10px] leading-snug" title={assignment}>{assignment}</span>;
     const pressed = selectedRoomId === member.roomId;
     const tone = memberCardTone[member.modelId];
     const accent = roleAccent[member.modelId];
@@ -241,15 +251,15 @@ export function GroupRoomSidebar({ onAddMember, groups, rooms, characters, selec
     </button>;
   });
   if (compact) {
-    // On the phone the members sit in one row under the title, above the background scrim, so the conversation keeps the whole width.
-    return <aside aria-label={t('group.sidebar.groupsandrooms')} data-member-strip className="relative z-20 flex shrink-0 flex-col gap-1 border-b border-[#E6DCD0]/70 dark:border-[#6C7BA8]/25 bg-[#FBF8F3]/68 dark:bg-[#101524]/45 backdrop-blur-md dark:backdrop-blur-xl dark:backdrop-saturate-150 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_8px_20px_-10px_rgba(0,0,0,0.55)] px-2.5 pt-1.5 pb-0.5">
+    // On the phone the members float directly over the single background picture with zero opaque band.
+    return <aside aria-label={t('group.sidebar.groupsandrooms')} data-member-strip className="pointer-events-auto relative z-20 flex shrink-0 flex-col gap-1 bg-transparent px-2.5 pt-1 pb-0.5">
       <nav aria-label={t('group.sidebar.memberrooms')} className="flex items-center gap-2.5 overflow-x-auto px-1 pt-0.5 pb-2.5">{memberCards}
         {onAddMember && <button type="button" onClick={onAddMember} aria-label={t('group.sidebar.addmember')} title={t('group.sidebar.addmember')} data-add-member
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-dashed border-[#C9B8A6] dark:border-[#3A4366] bg-white/85 dark:bg-[#1D243C] text-[#6E5D52] dark:text-[#B5BED6] hover:bg-[#F3ECE1] dark:hover:bg-[#27304D] active:scale-95 transition cursor-pointer"><Plus size={15} aria-hidden="true" /></button>}
       </nav>
     </aside>;
   }
-  return <aside aria-label={t('group.sidebar.groupsandrooms')} className={`flex h-full shrink-0 flex-col overflow-hidden border-r border-[#E6DCD0] dark:border-[#2E3654] bg-[#F7F2E9] dark:bg-[#151B2E] w-44`}>
+  return <aside aria-label={t('group.sidebar.groupsandrooms')} className={`flex h-full shrink-0 flex-col overflow-hidden border-r border-[#E6DCD0]/70 dark:border-[#2E3654]/75 bg-[#FBF8F3]/68 dark:bg-[#13182A]/74 backdrop-blur-md w-44`}>
     {!compact && <div className="shrink-0 border-b border-[#E6DCD0] dark:border-[#2E3654] px-4 py-3 text-xs font-bold text-[#6E5D52] dark:text-[#B5BED6]">{t('group.sidebar.rooms.title')}</div>}
     <nav className={`min-h-0 flex-1 space-y-3 overflow-y-auto py-2 ${compact ? 'px-1' : 'px-2'}`} aria-label={t('group.sidebar.rooms.select')}>
       <section aria-label={t('group.sidebar.groups.title')}>

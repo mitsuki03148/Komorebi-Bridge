@@ -1,3 +1,11 @@
+// Contents
+// - Normalize model names and label effort levels
+// - Keep the picker menu in sync
+// - Find the options for this room
+// - Choose a model with a tap or a slide
+// - Choose an effort level on the track
+// - Place and render the picker
+
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Cpu, Gauge, Sparkles } from 'lucide-react';
@@ -5,6 +13,8 @@ import type { CharacterProfile, EffortLevel, TerminalRoom } from '../types/guild
 import { barModelName, shortModelName } from '../utils/roomUi';
 import { useT } from '../i18n/useLang';
 
+// Normalize model names and label effort levels
+// CLI model names can arrive with different case and punctuation.
 const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
 const allEfforts: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
@@ -17,9 +27,11 @@ const effortShort: Record<EffortLevel, string> = {
   ultra: 'ultra',
 };
 
+// Keep the picker menu in sync
+// Room changes, disabled controls and outside input can close the menu.
 export function ModelEffortPicker({ room, character, kind, onSend, mobile = false, disabled = false }: {
   room: TerminalRoom; character: CharacterProfile; kind: 'model' | 'effort';
-  onSend: (roomId: string, command: string, mobile?: boolean) => void; mobile?: boolean; disabled?: boolean;
+  onSend: (roomId: string, command: string) => void; mobile?: boolean; disabled?: boolean;
 }) {
   const { t } = useT();
   const [open, setOpen] = useState(false);
@@ -55,6 +67,8 @@ export function ModelEffortPicker({ room, character, kind, onSend, mobile = fals
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, [open]);
 
+  // Find the options for this room
+  // Each CLI reports model names and supported efforts in its own format.
   const displayModel = room.modelId === 'CLAUDE'
     ? room.selectedSubModel.replace(/\s+and saved as your default\b.*$/i, '')
     : room.selectedSubModel;
@@ -80,12 +94,14 @@ export function ModelEffortPicker({ room, character, kind, onSend, mobile = fals
   const familyLabel = (family: string) => family.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   const useNativeModel = room.modelId !== 'AGY' && options.length === 0;
 
+  // Choose a model with a tap or a slide
+  // Sending a choice clears the gesture state for either picker.
   const choose = (command: string) => {
     setOpen(false);
     setHoveredCmd(null);
     hoveredCmdRef.current = null;
     setDragEffortIndex(null);
-    onSend(room.id, command, mobile);
+    onSend(room.id, command);
   };
 
   // Hold-and-slide gesture for Model picker (keeps normal tap-to-open intact).
@@ -170,7 +186,8 @@ export function ModelEffortPicker({ room, character, kind, onSend, mobile = fals
     window.addEventListener('pointercancel', onCancel);
   };
 
-  // Sliding bar helpers for Thinking (effort) picker.
+  // Choose an effort level on the track
+  // Dragging previews a stop and releasing sends that effort to the room.
   const currentEffortIdx = Math.max(0, efforts.findIndex(level => level === room.effortLevel));
   const activeEffortIdx = dragEffortIndex ?? (room.effortLevel ? currentEffortIdx : 0);
   const effortPct = efforts.length > 1 ? (activeEffortIdx / (efforts.length - 1)) * 100 : 100;
@@ -206,6 +223,8 @@ export function ModelEffortPicker({ room, character, kind, onSend, mobile = fals
     }
   };
 
+  // Place and render the picker
+  // The menu follows the trigger but renders above the composer.
   const menuWidth = kind === 'effort' && efforts.length > 0 ? 256 : 232;
   const anchorRect = open && root.current ? root.current.getBoundingClientRect() : null;
   const menuLeft = anchorRect
@@ -217,9 +236,9 @@ export function ModelEffortPicker({ room, character, kind, onSend, mobile = fals
 
   const buttonClass = `group flex items-center gap-1 min-w-0 max-w-full rounded-full transition-all duration-150 active:scale-95 select-none ${
     open
-      ? 'bg-[#FCF0F4]/95 text-[#7A3851] ring-1 ring-[#E4B8C7]/70 dark:bg-[#2A2136]/95 dark:text-[#F4C4D4] dark:ring-[#6B4A6E]/70'
-      : 'text-[#6E5D52] dark:text-[#C5CDE3] hover:bg-white/80 dark:hover:bg-[#27304D]'
-  } ${mobile ? 'min-h-8 px-2 py-1 text-[10.5px] sm:px-2.5' : 'min-h-8 px-2.5 py-1 text-xs'}`;
+      ? 'bg-[#FCF0F4]/95 text-[#7A3851] ring-1 ring-[#E4B8C7]/85 shadow-[0_0_12px_-2px_rgba(217,130,139,0.45)] dark:bg-[#2E223A]/95 dark:text-[#F7C6D6] dark:ring-[#F0A4B6]/65 dark:shadow-[0_0_14px_-2px_rgba(240,164,182,0.5)]'
+      : 'text-[#6E5D52] dark:text-[#DCE2F2] hover:bg-white/80 dark:hover:bg-[#27304D]'
+  } ${mobile ? 'min-h-7 px-2 py-0.5 text-[10.5px] sm:px-2.5' : 'min-h-8 px-2.5 py-1 text-xs'}`;
 
   const modelOptionList: { id: string; label: string; cmd: string; active: boolean }[] = kind === 'model'
     ? room.modelId === 'AGY'
@@ -257,7 +276,7 @@ export function ModelEffortPicker({ room, character, kind, onSend, mobile = fals
     {open && root.current && createPortal(<div ref={menuRef} role="menu" data-picker-menu aria-label={kind === 'model' ? t('picker.menu.model') : t('picker.menu.effort')}
       // Drawn on the page itself, not inside the bar: a tall composer above the bar sits in a layer of its own and used to cover the menu.
       style={{ position: 'fixed', left: menuLeft, bottom: menuBottom, width: menuWidth }}
-      className="guild-pop-in origin-bottom-left max-w-[calc(100vw-1.5rem)] z-[80] max-h-72 overflow-y-auto rounded-[22px] border border-[#E5D7C6]/90 bg-[#FFFDF9]/95 p-1.5 shadow-[0_20px_44px_-12px_rgba(74,62,54,0.28),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl dark:border-[#3A456A]/90 dark:bg-[#192036]/95 dark:shadow-[0_20px_44px_-12px_rgba(0,0,0,0.68),inset_0_1px_0_rgba(255,255,255,0.07)]">
+      className="guild-pop-in origin-bottom-left max-w-[calc(100vw-1.5rem)] z-[80] max-h-72 overflow-y-auto rounded-[22px] border border-[#E7C2CF]/85 bg-[#FFFDF9]/95 p-1.5 shadow-[0_18px_40px_-10px_rgba(74,62,54,0.24),0_0_20px_-4px_rgba(217,130,139,0.28),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-xl dark:border-[#F0A4B6]/45 dark:bg-[#192036]/94 dark:shadow-[0_20px_44px_-12px_rgba(0,0,0,0.68),0_0_26px_-4px_rgba(240,164,182,0.38),inset_0_1px_0_rgba(255,255,255,0.1)]">
 
       {kind === 'model' && (
         <>
@@ -314,7 +333,6 @@ export function ModelEffortPicker({ room, character, kind, onSend, mobile = fals
             </span>
           </div>
 
-          {/* Interactive Magical Sliding Track */}
           <div
             ref={trackRef}
             data-effort-slider
@@ -325,16 +343,13 @@ export function ModelEffortPicker({ room, character, kind, onSend, mobile = fals
             onPointerCancel={() => setDragEffortIndex(null)}
             className="relative mx-2 flex h-7 cursor-pointer items-center select-none"
           >
-            {/* Base Track */}
             <div className="h-2 w-full overflow-hidden rounded-full bg-[#EFE5DA] shadow-inner dark:bg-[#272F4B]">
-              {/* Active Gradient Fill */}
               <div
                 className="h-full rounded-full bg-gradient-to-r from-[#E8C5D0] via-[#D47A92] to-[#9E5278] transition-[width] duration-100 dark:from-[#8C84B8] dark:via-[#C97C9F] dark:to-[#F0A8BE]"
                 style={{ width: `${effortPct}%` }}
               />
             </div>
 
-            {/* Stop Dots */}
             {efforts.map((level, index) => {
               const pos = efforts.length > 1 ? (index / (efforts.length - 1)) * 100 : 100;
               const passed = index <= activeEffortIdx;
@@ -350,7 +365,6 @@ export function ModelEffortPicker({ room, character, kind, onSend, mobile = fals
               );
             })}
 
-            {/* Glowing Pearl Thumb */}
             <span
               aria-hidden="true"
               style={{ left: `${effortPct}%` }}
@@ -360,7 +374,6 @@ export function ModelEffortPicker({ room, character, kind, onSend, mobile = fals
             />
           </div>
 
-          {/* Tappable Stop Labels */}
           <div className="mt-1.5 flex items-center justify-between gap-0.5">
             {efforts.map((level, index) => {
               const isSelected = index === activeEffortIdx;

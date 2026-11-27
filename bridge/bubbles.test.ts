@@ -175,7 +175,7 @@ test('the working twinkle on a group member has no box behind it', async () => {
 test('the group header is one line: a single ⋯ menu holds add member and details, and the side list titles are larger and bold', async () => {
   const { readFile } = await import('node:fs/promises')
   const chat = await readFile('src/components/GroupChat.tsx', 'utf8')
-  const header = chat.slice(chat.indexOf('<header className="relative z-30'), chat.indexOf('</header>'))
+  const header = chat.slice(chat.indexOf('<header '), chat.indexOf('</header>'))
   assert.equal(zh['group.options'], '群組選項')
   assert.equal(zh['group.invite.title'], '加入成員')
   assert.equal(zh['group.details'], '房間詳情')

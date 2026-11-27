@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import type { GroupChat, TerminalRoom } from '../src/types/guild'
+import { Bench, type Ticket } from './bench'
+import { cancelLeadTickets, type BenchDeps } from './bench-server'
 import { reportIsDone } from '../src/utils/attentionDiff'
-import { HandledReports, personaReport, personaTicket, sendPersonaNotices } from './persona-notice'
+import { HandledReports, manualPersonaNotice, personaReport, personaTicket, sendPersonaNotices } from './persona-notice'
 
 const root = '/Volumes/Komorebi/Inbox'
 const report = (extra = '', status = 'DONE') => `Result: ${status} 已完成。\nEvidence: \`${root}/奏/2026-11-19-music fix/HANDOFF.md\`\n${extra}\nRESULT — ${status}`
@@ -42,6 +44,7 @@ function setup(lead: TerminalRoom, send?: (...args: any[]) => any) {
   const handled = new Set<string>()
   const deps = {
     inboxRoot: root, since: Date.now() - 60_000, groups: () => [group], room: (id: string) => id === 'lead' ? lead : undefined,
+    tickets: (_groupId: string): readonly Ticket[] => [],
     handled: { has: (id: string) => handled.has(id), add: (id: string): void => { handled.add(id); } },
     send: send ?? ((_g: GroupChat, _l: TerminalRoom, ticket: { title: string; body: string }) => { tickets.push(ticket); return { sent: true as const, roomId: 'clerk' } }),
     tell: (_l: TerminalRoom, text: string) => void told.push(text),
@@ -162,4 +165,103 @@ test('handled reports survive a restart', async () => {
     assert.equal(new HandledReports(file).has('r1'), true)
     assert.equal(new HandledReports(file).has('r2'), false)
   } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+
+const manualFolder = `${root}/奏/2026-11-19-music fix`
+function manualFixture(body = `Please notify 奏. Inbox: \`${manualFolder}/HANDOFF.md\``) {
+  const bench = new Bench()
+  const author = { sessionId: 'lead', roomName: 'Lead', modelId: 'CODEX' as const }
+  const clerk = { sessionId: 'clerk', roomName: 'Clerk', modelId: 'CODEX' as const }
+  const ticket = bench.send({ groupId: group.id, from: author, to: clerk, body })
+  const f = setup(room('lead', report()))
+  const deps = { ...f.deps, tickets: (_groupId: string): Ticket[] => [bench.get(ticket.id)!] }
+  return { ...f, deps, bench, author, clerk, ticket }
+}
+
+for (const state of ['new', 'seen', 'done'] as const) {
+  test(`a ${state} manual clerk notification prevents an automatic duplicate and tells the lead once`, () => {
+    const f = manualFixture()
+    if (state === 'seen') f.bench.markSeen(f.ticket.id)
+    if (state === 'done') f.bench.done(f.ticket.id, f.clerk.sessionId, 'Sent.\nRESULT — DONE')
+    let scanned = false
+    assert.deepEqual(sendPersonaNotices({ ...f.deps, beforeNotice: () => { scanned = true } }), [])
+    assert.equal(f.tickets.length, 0)
+    assert.equal(scanned, false, 'suppression happens before inventory and dispatch')
+    assert.deepEqual(f.told, [`已有人手通知 #${f.ticket.id}，Bridge 唔再重派。`])
+    assert.deepEqual(sendPersonaNotices(f.deps), [])
+    assert.equal(f.told.length, 1)
+  })
+}
+
+for (const kind of ['cancelled', 'STOP', 'INCOMPLETE', 'failed-worktree', 'expired'] as const) {
+  test(`a ${kind} manual notification does not suppress automatic dispatch`, () => {
+    const f = manualFixture()
+    if (kind === 'cancelled') f.bench.cancel(f.ticket.id, [f.author.sessionId])
+    else if (kind === 'failed-worktree') f.ticket.worktree = { state: 'failed', source: '/fixture', error: 'failed' }
+    else if (kind === 'expired') f.ticket.expiredAt = new Date().toISOString()
+    else f.bench.done(f.ticket.id, f.clerk.sessionId, `RESULT — ${kind}`)
+    assert.equal(sendPersonaNotices(f.deps).length, 1)
+    assert.equal(f.tickets.length, 1)
+    assert.deepEqual(f.told, [])
+  })
+}
+
+for (const [label, body] of [
+  ['different folder', `通知 奏：${manualFolder}-other/HANDOFF.md`],
+  ['nested folder', `通知 奏：${manualFolder}/other/HANDOFF.md`],
+  ['different persona', `通知 墨：${root}/墨/2026-11-19-music fix/HANDOFF.md`],
+  ['not a notification', `Review the evidence at \`${manualFolder}/HANDOFF.md\``],
+] as const) {
+  test(`a manual task for ${label} leaves this notice eligible`, () => {
+    const f = manualFixture(body)
+    assert.equal(sendPersonaNotices(f.deps).length, 1)
+    assert.equal(f.tickets.length, 1)
+  })
+}
+
+for (const mismatch of ['other group', 'non-clerk', 'automatic-purpose', 'completion-reply'] as const) {
+  test(`a ${mismatch} ticket is not a manual clerk notification`, () => {
+    const f = manualFixture()
+    if (mismatch === 'other group') f.ticket.groupId = 'other-group'
+    if (mismatch === 'non-clerk') f.ticket.to.sessionId = 'reviewer'
+    if (mismatch === 'automatic-purpose') f.ticket.purpose = 'persona-notice'
+    if (mismatch === 'completion-reply') f.ticket.kind = 'done'
+    assert.equal(sendPersonaNotices(f.deps).length, 1)
+  })
+}
+
+test('Chinese notification and the completion-notify skill both recognize the exact Inbox directory', () => {
+  for (const body of [`請按 persona-completion-notify 向 奏 發送完成通知。\nInbox HANDOFF：${manualFolder}/HANDOFF.md`, `通知 奏：\`${manualFolder}/\``, `Use persona-completion-notify 向 奏 回報。\n${manualFolder}/HANDOFF.md`]) {
+    const f = manualFixture(body)
+    assert.equal(sendPersonaNotices(f.deps).length, 0)
+    assert.equal(f.tickets.length, 0)
+  }
+})
+
+
+test('retained Bench history suppresses a completed manual task and keeps an open one through lead closeout', () => {
+  const f = manualFixture()
+  const lead = room('lead', report()), clerk = room('clerk')
+  const deps = { ...f.deps, room: (id: string) => id === 'lead' ? lead : id === 'clerk' ? clerk : undefined,
+    tickets: (id: string) => f.bench.tasks(id) }
+  const unrelated = f.bench.send({ groupId: group.id, from: f.author, to: f.clerk, body: 'Unrelated task' })
+  assert.equal(sendPersonaNotices(deps).length, 0)
+  const manual = manualPersonaNotice(personaReport(report(), root)!, group, f.bench.tasks(group.id), deps.room)!
+  const benchDeps: BenchDeps = { bench: f.bench, groups: () => [group], rooms: () => [lead, clerk], tool: '/fixture', note: () => {}, notice: () => {} }
+  assert.deepEqual(cancelLeadTickets(benchDeps, group.id, lead, [manual.id]), [unrelated.id])
+  assert.equal(f.ticket.cancelledAt, undefined, 'the manual notice still needs to reach the persona')
+  f.bench.done(f.ticket.id, f.clerk.sessionId, 'RESULT — DONE')
+  lead.logs.push({ ...lead.logs[0], id: 'after-manual', text: report('Manual notification complete.') })
+  assert.equal(sendPersonaNotices(deps).length, 0)
+  assert.equal(f.tickets.length, 0)
+})
+
+
+test('manual clerk matching uses the room session when ticket endpoint is not a room id', () => {
+  const f = manualFixture()
+  f.ticket.to.sessionId = 'clerk-native-session'
+  const clerk = { ...room('clerk'), sessionId: f.ticket.to.sessionId }
+  assert.equal(sendPersonaNotices({ ...f.deps, room: id => id === 'clerk' ? clerk : f.deps.room(id) }).length, 0)
+  assert.equal(f.tickets.length, 0)
 })

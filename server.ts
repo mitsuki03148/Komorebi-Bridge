@@ -1,3 +1,29 @@
+// Bridge entry point, wired by the local launch scripts.
+// Contents
+// Startup configuration and locks
+// Transcription availability
+// Restart and process settings
+// Shared request state
+// Network identity and socket delivery
+// Room events and recovery
+// Push notifications and Inbox alerts
+// Room settings and replacement
+// Group membership and room presence
+// Workbench services
+// File triggers and notices
+// Delivery holds and RSI scheduling
+// Group closeout and workbench maintenance
+// HTTP and WebSocket admission
+// WebSocket services and views
+// WebSocket groups, rooms and panels
+// WebSocket file triggers and terminal input
+// Vite development server
+// Local CLI workbench hook
+// Web interface delivery
+// Before listening
+// After binding the port
+// Maintenance and shutdown
+
 import { maxUploadFrameBytes } from './src/utils/fileAttachments';
 import { BridgeRestartController, restartJobState } from './bridge/bridge-restart';
 import { execFile } from 'node:child_process';
@@ -53,7 +79,7 @@ import { deliverFileNotice, fileNoticeHoldsRoom } from './bridge/file-trigger-de
 import { ArchiveGroups, type RememberedGroup } from './bridge/archive-groups';
 import { Successors } from './bridge/successors';
 import { moveClaudeRoom, replaceStaleRoom, replaceVerdict } from './bridge/room-replace';
-import { HandledReports, sendPersonaNotices } from './bridge/persona-notice';
+import { HandledReports, manualPersonaNotice, personaReport, sendPersonaNotices } from './bridge/persona-notice';
 import { listInbox } from './bridge/inbox';
 import { reconcileInboxAlerts, scanInboxAlerts, type InboxAlertScan } from './bridge/inbox-alerts';
 import { HandoffLog } from './bridge/handoff-log';
@@ -63,6 +89,8 @@ import { reportIsDone, reportWaitMs } from './src/utils/attentionDiff';
 import { benchAction, benchHook, benchRequest, cancelLeadTickets, dispatchRsiTidy, escalateStalled, escalateUnread, idleWake, legacyBenchInputGuard, retryUnreadWake, runFixedBenchWake, sendFromBridge, stalledWake, startClosedRecipient, type BenchDeps } from './bridge/bench-server';
 import type { ClientEvent, ServerEvent } from './src/types/bridge';
 
+// Startup configuration and locks
+// Load local settings and check the UI build, checkout, workspace and port before wiring Bridge services.
 const project = fileURLToPath(new URL('.', import.meta.url));
 // A direct `npm run dev` uses the same ignored local settings as the launch scripts.
 loadLocalEnv({ path: join(project, '.env.komorebi-local'), quiet: true });
@@ -98,12 +126,17 @@ if (process.platform === 'darwin') {
   const info = await stat(helper).catch(() => undefined);
   if (info?.isFile() && !(info.mode & 0o100)) await chmod(helper, info.mode | 0o100);
 }
+
+// Transcription availability
+// Keep the advertised transcription capability current as the local Whisper installation changes.
 // Whether this Mac can turn recordings into text (the Whisper model and program are installed); looked at again each minute.
 let transcribeReady = false;
 const checkTranscribe = () => void transcribeAvailable().then(ok => { transcribeReady = ok; });
 checkTranscribe();
 setInterval(checkTranscribe, 60_000).unref();
 
+// Restart and process settings
+// Wire the launchd restart controller and expose the workspace and skill paths to child processes.
 const run = promisify(execFile);
 
 const restartInstanceId = randomUUID();
@@ -123,6 +156,9 @@ const restartController = new BridgeRestartController({
 const restartSupported = restartController.supported;
 process.env.KOMOREBI_WORKSPACE = workspace;
 process.env.KOMOREBI_SKILLS = config.skills;
+
+// Shared request state
+// Keep storage scans, read marks and media links in one place and resolve the pairing key before admitting clients.
 let storageScan: ReturnType<typeof inventoryTranscripts> | undefined;
 /** What the Founder has read, shared by every device. */
 const readMarks = new ReadMarkStore(join(workspace, '.komorebi-read-marks.json'));
@@ -130,6 +166,9 @@ const media = new MediaLinks([workspace, join(homedir(), 'Documents')]);
 const pairing = await resolvePairingKey(process.env.KOMOREBI_PAIRING_KEY);
 if (pairing.warning) console.warn(pairing.warning);
 const pairingKey = Buffer.from(pairing.key);
+
+// Network identity and socket delivery
+// Resolve request scope, discover the Tailscale address and limit queued data when sending events.
 let tailscaleIp: string | null = null;
 /** This Mac's Tailscale name, which Tailscale Serve uses as the Host of its HTTPS requests. */
 let serveHost: string | null = null;
@@ -190,12 +229,15 @@ function send(ws: WebSocket, event: ServerEvent) {
   ws.send(JSON.stringify(event));
 }
 
+// Room events and recovery
+// Send room updates to clients and reconcile group membership and idle timers after room changes.
 // Assigned further down, once the groups exist; events that arrive before then skip it.
 let groupCloser: GroupCloser | undefined;
 let recoveryScheduled = false;
 let recoveryMembers = new Set<string>();
 // Declared early: a recovery microtask can run at the first top-level await, long before the shutdown code further down.
 let shuttingDown = false;
+const loggedPushObservationFailures = new Set<string | number>();
 
 function scheduleRecovery() {
   if (recoveryScheduled || !groupCloser) return;
@@ -220,7 +262,14 @@ function scheduleRecovery() {
 }
 function broadcast(event: ServerEvent) {
   for (const client of clients) send(client, event);
-  if ((event.type === 'ROOM' || event.type === 'SYNC_UPDATE') && event.room) void pushNotifier.observe(event.room).catch(() => {});
+  if ((event.type === 'ROOM' || event.type === 'SYNC_UPDATE') && event.room) {
+    void pushNotifier.observe(event.room).catch(error => {
+      const reason = error?.code ?? error?.name ?? 'unknown';
+      if (loggedPushObservationFailures.has(reason)) return;
+      loggedPushObservationFailures.add(reason);
+      console.error('未能處理房間推送通知', reason);
+    });
+  }
   if (event.type === 'ROOM') {
     if (!rooms.isGroupMember(event.room.id)) presence?.activity(event.room.id, Boolean(event.room.ready && event.room.status === 'idle'));
     scheduleRecovery();
@@ -267,6 +316,8 @@ function removeFromGroups(roomId: string, what: string, remember = false, quiet 
   if (remember) archiveGroups.remember(roomId, left);
 }
 
+// Push notifications and Inbox alerts
+// Track which devices need notices and scan the Inbox for new alerts.
 const push = new PushStore(join(project, '.env.komorebi-push.json'));
 /** What each open page says about itself: which push subscription it holds, and whether it is on screen. */
 const devices = new Map<WebSocket, { endpoint?: string; visible: boolean }>();
@@ -294,6 +345,9 @@ function refreshInboxAlerts() {
   }).finally(() => { inboxScan = undefined; });
   return inboxScan;
 }
+
+// Room settings and replacement
+// Load room defaults, handle stalled Claude resumes and connect the GitHub and Drive panels.
 const rooms = new Rooms(workspace, broadcast);
 const inputLogPath = join(homedir(), 'Library', 'Logs', 'komorebi-input.log');
 rooms.inputLogPath = inputLogPath;
@@ -310,7 +364,7 @@ const callOutResume = (room: TerminalRoom, extra = '') => {
   broadcast({ type: 'ATTENTION', roomId: room.id, message: `${who}${crown ? '（總指揮）' : ''} 閒置太久，停在「Resume 舊對話」選單，請揀：1 接回舊對話（較耗額度）／2 開新對話。${extra}` });
   void pushNotifier.callOutResume(room).catch(() => {});
 };
-const sendFirstRoomInput = async (fresh: TerminalRoom, text = 'hi') => {
+const sendFirstRoomInput = async (fresh: TerminalRoom, text: string) => {
   let last = '新房沒有接受第一句。';
   for (let attempt = 0; attempt < 5; attempt++) {
     if (attempt) await new Promise<void>(resolve => setTimeout(resolve, 4_000));
@@ -367,6 +421,9 @@ setInterval(() => void pushNotifier.tick(rooms.snapshot()).then(called => {
     broadcast({ type: 'ATTENTION', roomId: room.id, message: `${rooms.characters[room.modelId].characterName} · ${room.roomName} ${reason ? blockerText[reason] : '畫面長時間沒有變化，可能需要你處理'}` });
   }
 }).catch(() => {}), 10_000).unref();
+
+// Group membership and room presence
+// Track who is viewing each room and reconcile the room watchers when the roster changes.
 // The crown has the group clock; every other room closes after 2 minutes unviewed.
 const presence = new RoomPresence<WebSocket>(roomId => {
   if (groupCloser?.isCrown(roomId)) { scheduleRecovery(); return true; }
@@ -402,6 +459,8 @@ const groups = new Groups(join(project, '.env.komorebi-groups.json'), group => {
   });
 groups.boardEnabled = features.board;
 
+// Workbench services
+// Connect ticket routing, room successors and worktree capacity to the workbench.
 // Each group member's workbench: tickets other members write for it (see Review/WORKBENCH/PLAN.md).
 rooms.benchHook = join(project, 'scripts', 'bench-hook');
 rooms.hasOpenTickets = room => [room.sessionId, room.id].some(key => Boolean(key) && (benchDeps.bench.mine(key as string).length > 0 || benchDeps.bench.openFrom(key as string).length > 0));
@@ -416,6 +475,7 @@ const benchDeps: BenchDeps = {
   rooms: () => rooms.snapshot(),
   groups: () => groups.visibleSnapshot(),
   createWorktree: (id, repo, ref) => { if (config.mount) assertMountedVolume(config.mount); return bridgeWorktrees.create(id, repo, ref); },
+  worktreeCapacity: () => bridgeWorktrees.capacity(),
   roleRouting: {
     characters: () => rooms.characters,
     state: room => rooms.roleRoutingState(room),
@@ -427,6 +487,8 @@ const benchDeps: BenchDeps = {
   flow: (fromRoomId, toRoomId, kind, ticket) => broadcast({ type: 'BENCH_FLOW', fromRoomId, toRoomId, kind, ticket }),
 };
 
+// File triggers and notices
+// Maintain observers against signed settings and deliver pending file notices to group leads.
 // Separate, Bridge-owned file-notice state. No watcher exists until an item is explicitly enabled.
 const triggerConfigPath = join(project, '.env.komorebi-file-triggers.json');
 // Before listening only a fail-closed placeholder exists; constructor recovery can write Keychain.
@@ -628,6 +690,8 @@ function startTrigger(id: string, resumed = false, manualAuthorized = false): bo
   }
 }
 
+// Delivery holds and RSI scheduling
+// Keep rooms open during delivery and dispatch eligible RSI review work.
 rooms.hasDeliveryHold = room => benchDeps.bench.hasDeliveryHold(room.sessionId ? [room.sessionId, room.id] : [room.id]) ||
   (features.fileTrigger && fileNoticeHoldsRoom(groups.snapshot(), groupId => fileTriggers.hasHold(groupId), room.id));
 rooms.onRecoveryChange = scheduleRecovery;
@@ -659,12 +723,14 @@ function benchRecoveryChanged() {
   if (features.fileTrigger) for (const group of groups.snapshot()) if (fileTriggers.hasPending(group.id)) scheduleFileNotice(group.id);
 }
 
+// Group closeout and workbench maintenance
+// Close idle group rooms, deliver completion notices and wake rooms with pending work.
 groupCloser = new GroupCloser({
   groups: () => groups.snapshot(),
   busy: roomId => presence.hasViewers(roomId) || rooms.isWorking(roomId) || rooms.deliveryPending(roomId),
   isOpen: roomId => rooms.isOpen(roomId),
   report: group => group.orchestratorRoomId ? rooms.currentReport(group.orchestratorRoomId) : undefined,
-  close: roomId => { if (!presence.hasViewers(roomId)) rooms.closeUnviewed(roomId); },
+  close: roomId => { if (!presence.hasViewers(roomId)) rooms.closeUnviewed(roomId, 'group-idle'); },
 });
 
 // A wake-up message typed into a member's CLI, the same way for an idle wake, a re-delivery and a reminder.
@@ -706,6 +772,7 @@ function notifyPersonas() {
   try {
     sendPersonaNotices({
       inboxRoot: join(workspace, 'Inbox'), since: personaSince, groups: () => groups.snapshot(), room: roomId => rooms.rooms.get(roomId), handled: handledReports,
+      tickets: groupId => benchDeps.bench.tasks(groupId),
       beforeNotice: () => { if (features.inbox) void refreshInboxAlerts(); },
       send: (group, lead, ticket) => {
         const result = sendFromBridge(benchDeps, { requestId: 'persona-notice', action: 'send', from: lead.sessionId ?? lead.id, to: '@clerk', groupId: group.id, title: ticket.title, body: ticket.body }, true);
@@ -742,7 +809,9 @@ function cancelOnFinalReport() {
     finalReports.set(group.id, report);
     const text = lead.logs.find(entry => entry.id === report)?.text ?? '';
     if (!reportIsDone(text)) continue;
-    try { cancelLeadTickets(benchDeps, group.id, lead); } catch { /* The next report tries again; the three-hour close stays the backstop. */ }
+    const notice = personaReport(text, join(workspace, 'Inbox'));
+    const manual = notice && manualPersonaNotice(notice, group, benchDeps.bench.tasks(group.id), id => rooms.rooms.get(id));
+    try { cancelLeadTickets(benchDeps, group.id, lead, manual ? [manual.id] : []); } catch { /* The next report tries again; the three-hour close stays the backstop. */ }
   }
 }
 
@@ -765,7 +834,7 @@ rooms.onIdle = idle => {
 };
 
 // Tickets that nobody answers: a member that stays idle gets an unread ticket again, or a reminder for a task it has read but not finished.
-// Nothing here changes while a member is working, waiting for the Founder, or closed.
+// Retries and reminders need an idle prompt. The same pass can start a closed room with unread work.
 const idleSince = new Map<string, number>();
 setInterval(() => {
   const now = Date.now();
@@ -797,6 +866,9 @@ function syncGroupWatches() {
 }
 
 retainGroupRooms();
+
+// HTTP and WebSocket admission
+// Check the request scope, pair remote clients and send the initial Bridge state.
 const http = createServer(app);
 const wss = new WebSocketServer({ noServer: true, maxPayload: maxUploadFrameBytes, perMessageDeflate: false });
 const remoteClients = new Set<WebSocket>();
@@ -841,7 +913,7 @@ http.on('upgrade', (req, socket, head) => {
       clearTimeout(timer);
       clients.add(ws);
       presence.register(ws);
-      send(ws, { type: 'SNAPSHOT', readMarksSupported: true, autoCompactSupported: true, autoCompactAll: rooms.autoCompactAll(), restartSupported, restartInstanceId, rooms: rooms.snapshot(), characters: rooms.characters, tailscaleUrl: tailscaleUrl(), archivedKeys: rooms.archiveSnapshot(), pinSupported: true, pinnedKeys: rooms.pinSnapshot(), protectedKeys: rooms.protectedSnapshot(), renameSupported: true, deleteArchivedSupported: true, idleCloseSupported: true, workspaceRoot: workspace, defaultFolder: folderSetting.get(), fixedRoomDirectorySupported: true, agyAutoSupported: true, roomLaunchOptionsSupported: true, roomPresenceSupported: true, roomViewStartSupported: true, attachmentSupported: true, fileUploadSupported: true, terminalKeySupported: true, questionAnswerSupported: true, imagePreviewSupported: true, videoSupported: true, worktreeSupported: true, historyPagingSupported: true, launchModesSupported: true, launchModes: rooms.launchModes(), transcribeSupported: transcribeReady, pushPublicKey: push.publicKey, groups: groups.visibleSnapshot(), ...(features.board ? { groupBoardSupported: true as const } : {}), ...(features.inbox ? { inboxSupported: true as const } : {}), groupMemberRolesSupported: true, roleDirectionSupported: true, ...(features.fileTrigger ? { fileTriggersSupported: true as const } : {}), roleRoutingSupported: true, ...(groups.rolesNeedRepair ? { groupMemberRolesNeedRepair: true } : {}), successors: successors.snapshot() });
+      send(ws, { type: 'SNAPSHOT', readMarksSupported: true, autoCompactSupported: true, autoCompactAll: rooms.autoCompactAll(), restartSupported, restartInstanceId, rooms: rooms.snapshot(), characters: rooms.characters, tailscaleUrl: tailscaleUrl(), archivedKeys: rooms.archiveSnapshot(), pinSupported: true, pinnedKeys: rooms.pinSnapshot(), protectedKeys: rooms.protectedSnapshot(), renameSupported: true, deleteArchivedSupported: true, idleCloseSupported: true, workspaceRoot: workspace, defaultFolder: folderSetting.get(), fixedRoomDirectorySupported: true, agyAutoSupported: true, roomLaunchOptionsSupported: true, roomPresenceSupported: true, roomDraftsSupported: true, roomViewStartSupported: true, attachmentSupported: true, fileUploadSupported: true, terminalKeySupported: true, questionAnswerSupported: true, imagePreviewSupported: true, videoSupported: true, worktreeSupported: true, historyPagingSupported: true, launchModesSupported: true, launchModes: rooms.launchModes(), transcribeSupported: transcribeReady, pushPublicKey: push.publicKey, groups: groups.visibleSnapshot(), ...(features.board ? { groupBoardSupported: true as const } : {}), ...(features.inbox ? { inboxSupported: true as const } : {}), groupMemberRolesSupported: true, roleDirectionSupported: true, ...(features.fileTrigger ? { fileTriggersSupported: true as const } : {}), roleRoutingSupported: true, ...(groups.rolesNeedRepair ? { groupMemberRolesNeedRepair: true } : {}), successors: successors.snapshot() });
       send(ws, { type: 'READ_MARKS', marks: readMarks.all() });
       if (inboxAlerts) send(ws, { type: 'INBOX_ALERTS', data: inboxAlerts });
     };
@@ -875,7 +947,7 @@ http.on('upgrade', (req, socket, head) => {
         windowStart = Date.now();
       }
       if (binary || ++requests > 45) { ws.close(1008); return; }
-      // Only a signed-in client may send the large messages (images); before that nothing legitimate is bigger than a pairing key.
+      // Large attachment messages require authentication. Before pairing, the client only needs to send the key.
       if (!authenticated && (data as Buffer).length > 4096) { ws.close(1008); return; }
       let requestId: string | undefined;
       try {
@@ -886,6 +958,8 @@ http.on('upgrade', (req, socket, head) => {
           else { send(ws, { type: 'ERROR', message: '配對碼不正確。請核對 Mac Terminal。' }); ws.close(1008); }
           return;
         }
+        // WebSocket services and views
+        // Handle service requests and update the current room or group view after pairing.
         if (event?.type === 'BRIDGE_RESTART') {
           const result = await restartController.requestRestart(scope as 'local' | 'tailnet' | 'serve');
           send(ws, { type: 'BRIDGE_RESTART_RESULT', ...result });
@@ -974,6 +1048,12 @@ http.on('upgrade', (req, socket, head) => {
           send(ws, { type: 'PUSH_RESULT', ...(endpoint ? await pushNotifier.sendTest(endpoint) : { ok: false, message: '這部裝置未開啟通知。' }) });
           return;
         }
+        if (event?.type === 'DRAFT_ROOMS') {
+          if (!Array.isArray(event.roomIds) || event.roomIds.length > rooms.rooms.size ||
+              event.roomIds.some(id => typeof id !== 'string' || !rooms.rooms.has(id))) throw new Error('草稿房間無效。');
+          presence.draftMany(ws, event.roomIds);
+          return;
+        }
         if (event?.type === 'VIEW_ROOM') {
           if (event.roomId !== null && (typeof event.roomId !== 'string' || !rooms.rooms.has(event.roomId))) throw new Error('找不到這間房。');
           groupViews.leave(ws);
@@ -1013,6 +1093,8 @@ http.on('upgrade', (req, socket, head) => {
           }
           return;
         }
+        // WebSocket groups, rooms and panels
+        // Route group and room changes, along with requests from their supporting panels.
         if (event?.type === 'GROUP_CREATE') {
           const existingIds = event.existingRoomIds ?? [];
           if (typeof event.name !== 'string' || !/^[\p{L}\p{N}][\p{L}\p{N} _.()\-]{0,79}$/u.test(event.name.trim())) {
@@ -1286,6 +1368,8 @@ http.on('upgrade', (req, socket, head) => {
           groups.rename(event.groupId, event.name);
           return;
         }
+        // WebSocket file triggers and terminal input
+        // Validate trigger and group settings before falling through to the room's terminal event handler.
         if (event?.type === 'FILE_TRIGGERS_RESUME' || event?.type === 'FILE_TRIGGERS_GET' || event?.type === 'FILE_TRIGGERS_RESET' || event?.type === 'FILE_TRIGGERS_CONFIRM' || event?.type === 'FILE_TRIGGERS_SET_HINT' || event?.type === 'FILE_TRIGGERS_ADD' || event?.type === 'FILE_TRIGGERS_SET_ENABLED' || event?.type === 'FILE_TRIGGERS_REMOVE') {
           if (!features.fileTrigger) throw new Error('File triggers are disabled.');
           if (typeof event.groupId !== 'string' || !groups.get(event.groupId)) throw new Error('找不到群組。');
@@ -1365,7 +1449,7 @@ http.on('upgrade', (req, socket, head) => {
             const item = fileTriggers.settings(event.groupId).find(value => value.id === event.id);
             if (!item) throw new Error('找不到監察項。');
             if (item.offline) throw new Error('離線中請先確認恢復或取消監察。');
-            if (event.enabled) { if (item.offline) throw new Error('請先確認恢復離線監察。'); validateTriggerPath(workspace, item.path, item.kind, item.identity); triggerStates.delete(event.id); }
+            if (event.enabled) { validateTriggerPath(workspace, item.path, item.kind, item.identity); triggerStates.delete(event.id); }
             fileTriggers.setEnabled(event.groupId, event.id, event.enabled);
             if (event.enabled) { startTrigger(event.id); scheduleFileNotice(event.groupId); } else { triggerWatches.get(event.id)?.close(); triggerWatches.delete(event.id); releaseTriggerConfigWatch(); }
             scheduleRecovery();
@@ -1443,6 +1527,8 @@ http.on('upgrade', (req, socket, head) => {
   });
 });
 
+// Vite development server
+// Set up Vite middleware and its HMR socket on the existing HTTP server.
 const vite = config.ui === 'dev' ? await (await import('vite')).createServer({
   root: project,
   server: {
@@ -1459,6 +1545,7 @@ const vite = config.ui === 'dev' ? await (await import('vite')).createServer({
     },
   },
 }) : undefined;
+// Local CLI workbench hook
 // A CLI hook asks for its agent's new tickets. Only from this Mac; any failure answers "nothing" so a hook never breaks the CLI.
 app.post('/bench/hook/:cli', express.text({ type: () => true, limit: '8mb' }), (req, res) => {
   if (access(req) !== 'local') { res.status(403).json({}); return; }
@@ -1467,6 +1554,9 @@ app.post('/bench/hook/:cli', express.text({ type: () => true, limit: '8mb' }), (
   try { res.json(benchHook(benchDeps, req.params.cli, JSON.parse(typeof req.body === 'string' && req.body ? req.body : '{}'))); }
   catch { res.json({}); }
 });
+
+// Web interface delivery
+// Serve the branded shell and assets from Vite in development or from the built UI.
 app.get('/manifest.webmanifest', (_req, res) => {
   const manifest = JSON.parse(config.ui === 'build' ? readBuiltFile('manifest.webmanifest') : readFileSync(join(project, 'public', 'manifest.webmanifest'), 'utf8'));
   res.set('Cache-Control', 'no-store').type('application/manifest+json').send(brandManifest(manifest, config.displayName));
@@ -1506,6 +1596,8 @@ else {
   });
 }
 
+// Before listening
+// Restore group rooms, discover the network address and start attachment housekeeping.
 for (const group of groups.snapshot()) for (const [index, member] of group.members.entries()) {
   if (member.roomId.startsWith('session-')) continue; // Restored by the transcript watcher.
   const ordinal = group.members.slice(0, index + 1).filter(item => item.modelId === member.modelId).length;
@@ -1515,14 +1607,16 @@ for (const group of groups.snapshot()) for (const [index, member] of group.membe
 
 await refreshTailscale();
 http.on('error', error => { console.error(error.message); void shutdown(1); });
-// Uploaded images nobody has touched for two weeks go to the Trash (at start, then once a day).
-const sweepOldImages = () => void sweepAttachments().then(result => {
-  if (result.moved.length) broadcast({ type: 'NOTICE', message: `${result.moved.length} 張超過 ${attachmentMaxAgeDays} 日的上傳圖片已移到垃圾桶。` });
-  if (result.failed.length) console.error(`未能移動 ${result.failed.length} 張舊上傳圖片到垃圾桶，保留原位。`);
+// Uploaded attachments (images and other files) nobody has touched for two weeks go to the Trash, at start and then once a day.
+const sweepOldAttachments = () => void sweepAttachments().then(result => {
+  if (result.moved.length) broadcast({ type: 'NOTICE', message: `${result.moved.length} 個超過 ${attachmentMaxAgeDays} 日的上傳附件已移到垃圾桶。` });
+  if (result.failed.length) console.error(`未能移動 ${result.failed.length} 個舊上傳附件到垃圾桶，保留原位。`);
 }).catch(() => {});
-sweepOldImages();
-setInterval(sweepOldImages, 24 * 3_600_000).unref();
+sweepOldAttachments();
+setInterval(sweepOldAttachments, 24 * 3_600_000).unref();
 
+// After binding the port
+// Recover persisted work and start the transcript and trigger watchers once this process owns the listener.
 http.listen(port, config.host, () => {
   // Load and retire durable work only in the Bridge that actually acquired the port.
   const experienceScope = features.rsi ? readExperienceScope(workspace) : undefined;
@@ -1558,6 +1652,9 @@ http.listen(port, config.host, () => {
     for (const group of groups.snapshot()) scheduleFileNotice(group.id);
   }
 });
+
+// Maintenance and shutdown
+// Refresh trigger and socket health during operation, then release services when the process stops.
 // A locked or briefly unverifiable configuration heals itself: reload it, and start the observers again if they were stopped.
 if (features.fileTrigger) setInterval(() => {
   if (triggerNeedsSetup) return;

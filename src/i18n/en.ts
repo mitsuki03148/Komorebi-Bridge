@@ -859,7 +859,7 @@ export const en: Partial<Record<I18nKey, string>> = {
   'notice.group.wakeLimit': '12 CLIs are open. Close one room first.',
   'notice.group.leadSet': 'Set "{room}" as lead of "{group}".',
   'notice.folder.changed': 'Default working folder changed to {path}. New rooms start there; existing rooms stay put.',
-  'notice.attachment.expired': 'Moved {count} uploaded image(s) older than {days} days to the Trash.',
+  'notice.attachment.expired': 'Moved {count} uploaded attachment(s) older than {days} days to the Trash.',
   'notice.history.limit': 'Loaded up to the limit ({count} entries). Run /resume in the CLI for earlier history.',
   'settings.theme.title': 'Guild appearance',
   'settings.theme.auto.label': 'Schedule',

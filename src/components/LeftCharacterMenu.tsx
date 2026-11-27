@@ -1,3 +1,7 @@
+// Contents
+// - Set the role order and selected-room colours
+// - Show the roster and room list
+
 import { useT } from '../i18n/useLang';
 import { WorkingSpark } from './WorkingIndicator';
 import { formatPct, formatReset, roomStatusLabel, fiveHourQuota, weeklyQuota } from '../utils/roomUi';
@@ -16,6 +20,27 @@ import { RibbonTipBloom } from './BotanicalAccents';
 import { isRoomPinned, orderPinnedRooms, RoomPinBadge } from './RoomPin';
 import { ShieldCheck } from 'lucide-react';
 
+// Set the role order and selected-room colours
+// The order matches the desktop room shortcuts.
+const MODEL_ORDER: CLIModelId[] = ['AGY', 'CODEX', 'CLAUDE'];
+
+const selectedRoomTone: Record<CLIModelId, { card: string; icon: string }> = {
+  AGY: {
+    card: 'bg-[#FFFDFB]/92 dark:bg-[#2B1F2E]/90 border-[#D9828B] dark:border-[#F0A4B8] shadow-[0_0_16px_-3px_rgba(217,130,139,0.45)] dark:shadow-[0_0_18px_-2px_rgba(240,164,184,0.42)] ring-1 ring-[#D9828B]/35 dark:ring-[#F0A4B8]/35',
+    icon: 'bg-[#FCE8EB] dark:bg-[#3A2433] text-[#C85A68] dark:text-[#EFA4B2] border border-[#E8B2BC] dark:border-[#633B52]',
+  },
+  CODEX: {
+    card: 'bg-[#FFFDFB]/92 dark:bg-[#1B2B28]/90 border-[#6F9B78] dark:border-[#8BC89C] shadow-[0_0_16px_-3px_rgba(111,155,120,0.42)] dark:shadow-[0_0_18px_-2px_rgba(139,200,156,0.4)] ring-1 ring-[#6F9778]/35 dark:ring-[#8BC89C]/35',
+    icon: 'bg-[#E8F1E7] dark:bg-[#233832] text-[#4E7A55] dark:text-[#96C7A3] border border-[#B5D1B8] dark:border-[#3D5E52]',
+  },
+  CLAUDE: {
+    card: 'bg-[#FFFDFB]/92 dark:bg-[#202644]/90 border-[#7891C0] dark:border-[#9FAEEB] shadow-[0_0_16px_-3px_rgba(120,145,192,0.45)] dark:shadow-[0_0_18px_-2px_rgba(159,174,235,0.44)] ring-1 ring-[#7891B8]/35 dark:ring-[#9FAEEB]/35',
+    icon: 'bg-[#E8EDF9] dark:bg-[#2B3359] text-[#4A6191] dark:text-[#B4BCF2] border border-[#BCCAE2] dark:border-[#48558A]',
+  },
+};
+
+// Show the roster and room list
+// The sidebar gives desktop users access to groups, role usage and room activity.
 interface LeftCharacterMenuProps {
   characters: Record<CLIModelId, CharacterProfile>;
   rooms: TerminalRoom[];
@@ -29,27 +54,9 @@ interface LeftCharacterMenuProps {
   working?: Record<string, 'working' | 'stalled'>;
   onOpenUsageModal: (modelId: CLIModelId) => void;
   onPokeCharacter: (modelId: CLIModelId) => void;
-  /** Collaboration groups, one tap away from the room list. */
   groups?: GroupChat[];
   onSelectGroup?: (group: GroupChat) => void;
 }
-
-const MODEL_ORDER: CLIModelId[] = ['AGY', 'CODEX', 'CLAUDE'];
-
-const selectedRoomTone: Record<CLIModelId, { card: string; icon: string }> = {
-  AGY: {
-    card: 'bg-[#FFFDFB] dark:bg-[#2B1F2E] border-[#C86475] dark:border-[#E89AAC] shadow-[2.5px_3px_0_rgba(200,100,117,0.28)] ring-1 ring-[#D9828B]/35 dark:ring-[#E89AAC]/35',
-    icon: 'bg-[#FCE8EB] dark:bg-[#3A2433] text-[#C85A68] dark:text-[#EFA4B2] border border-[#E8B2BC] dark:border-[#633B52]',
-  },
-  CODEX: {
-    card: 'bg-[#FFFDFB] dark:bg-[#1B2B28] border-[#5E8867] dark:border-[#8BC096] shadow-[2.5px_3px_0_rgba(94,136,103,0.28)] ring-1 ring-[#6F9778]/35 dark:ring-[#8BC096]/35',
-    icon: 'bg-[#E8F1E7] dark:bg-[#233832] text-[#4E7A55] dark:text-[#96C7A3] border border-[#B5D1B8] dark:border-[#3D5E52]',
-  },
-  CLAUDE: {
-    card: 'bg-[#FFFDFB] dark:bg-[#202644] border-[#6680AA] dark:border-[#9CA6E8] shadow-[2.5px_3px_0_rgba(102,128,170,0.28)] ring-1 ring-[#7891B8]/35 dark:ring-[#9CA6E8]/35',
-    icon: 'bg-[#E8EDF9] dark:bg-[#2B3359] text-[#4A6191] dark:text-[#B4BCF2] border border-[#BCCAE2] dark:border-[#48558A]',
-  },
-};
 
 export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
   characters,
@@ -72,7 +79,6 @@ export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
   const [folded, setFolded] = React.useState<Partial<Record<CLIModelId, boolean>>>(() => {
     try {
       const saved: unknown = JSON.parse(localStorage.getItem('komorebi-folded-roles') ?? '{}');
-      // Anything but a plain object (null, a list, a number) is ignored.
       return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved as Partial<Record<CLIModelId, boolean>> : {};
     } catch { return {}; }
   });
@@ -82,9 +88,8 @@ export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
     return next;
   });
   return (
-    <aside className="w-[30%] min-w-[300px] max-w-[390px] h-full border-r border-[#E6DCD0] dark:border-[#2E3654] bg-[#F7F2E9]/90 dark:bg-[#151B2E]/92 backdrop-blur-md flex flex-col select-none overflow-hidden shrink-0">
-      {/* Sub-header for the 3-Character Guild Roster */}
-      <div className="px-4 py-2 border-b border-[#E6DCD0] dark:border-[#2E3654] bg-[#FBF8F3]/80 dark:bg-[#181F35]/85 flex items-center justify-between shrink-0">
+    <aside className="w-[30%] min-w-[300px] max-w-[390px] h-full border-r border-[#E6DCD0]/70 dark:border-[#2E3654]/75 bg-[#FBF8F3]/68 dark:bg-[#13182A]/74 backdrop-blur-md flex flex-col select-none overflow-hidden shrink-0">
+      <div className="px-4 py-2 border-b border-[#E6DCD0]/65 dark:border-[#2E3654]/70 bg-[#FBF8F3]/45 dark:bg-[#181F35]/50 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-1.5 text-xs text-[#6E5D52] dark:text-[#A4AECC]">
           <Sparkles className="w-3.5 h-3.5 text-[#D9828B] dark:text-[#EFA4B2] shrink-0" />
           <span className="font-bold text-[#4A3E36] dark:text-[#ECE7DF] font-display">{t('sidebar.title')}</span>
@@ -95,13 +100,7 @@ export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
         </span>
       </div>
 
-      {onSelectGroup && groups.length > 0 && <nav aria-label={t('sidebar.groups')} data-group-chips className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[#E6DCD0]/65 bg-[#FBF8F3]/55 px-3 py-2 backdrop-blur-sm dark:border-[#2E3654]/70 dark:bg-[#192036]/55">
-        {groups.map(group => <button key={group.id} type="button" onClick={() => onSelectGroup(group)} title={t('sidebar.group.title', { name: group.name, count: group.members.length })}
-          className="max-w-[11rem] shrink-0 cursor-pointer truncate rounded-full border border-[#D6DCF2]/90 bg-[#EEF0FA]/90 px-2.5 py-1 text-[11px] font-semibold text-[#4D557E] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] transition-all duration-150 hover:border-[#BFC8EC] hover:bg-[#E4E8FA] active:scale-95 dark:border-[#3E4870]/90 dark:bg-[#222947]/90 dark:text-[#C5CBFA] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] dark:hover:bg-[#2B3359]">{t('sidebar.group.name', { name: group.name })}</button>)}
-      </nav>}
-
-      {/* 3 Character Compartments (三格：瞳 AGY / 光 Codex / 響 Claude Code) */}
-      <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5">
+      <div className="flex-1 min-h-0 flex flex-col gap-2 p-2 overflow-hidden">
         {MODEL_ORDER.map((modelId) => {
           const char = characters[modelId];
           const modelRooms = orderedRooms.filter((r) => r.modelId === modelId);
@@ -130,13 +129,16 @@ export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
               ? 'bg-[#E6F2E8] dark:bg-[#20332C] text-[#4E7A55] dark:text-[#96C7A3] border-[#C5DEC8] dark:border-[#335446]'
               : 'bg-[#E8F0F8] dark:bg-[#232A4A] text-[#4F729B] dark:text-[#A9B7E8] border-[#C6D7EA] dark:border-[#394575]';
 
+          const visibleRooms = modelRooms.filter(isShown);
+          // Only a character with truly zero visible rooms shrinks to header height; folded sections can still have many pinned rooms, so they must stay flex-1 min-h-0 and never crush siblings.
+          const emptySection = visibleRooms.length === 0 && !isFolded;
+
           return (
             <section
               key={modelId}
-              className={`rounded-3xl border ${cardTheme} p-3 transition-all shadow-xs`}
+              className={`${emptySection ? 'shrink-0' : 'flex-1 min-h-0'} flex flex-col rounded-2xl border ${cardTheme} p-2.5 transition-all shadow-xs overflow-hidden`}
             >
-              {/* Top Row: Contained Hand-Drawn Watercolor Chibi Sprite + Character Info & Compact Icon Actions */}
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5 shrink-0">
                 <CharacterSpriteAnimator
                   modelId={modelId}
                   avatarUrl={char.avatarUrl}
@@ -147,7 +149,6 @@ export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
                   onClickSprite={() => onPokeCharacter(modelId)}
                 />
 
-                {/* Right Column: Name, Icon Toolbar & Soft HP/MP Bars */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-1">
                     <div className="flex items-center gap-1.5 truncate">
@@ -165,7 +166,6 @@ export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
                       </span>
                     </div>
 
-                    {/* Icon-only buttons: Sync Folder, Usage/Potion, New Room */}
                     <div className="flex items-center gap-1 shrink-0">
                       {foldable && <button type="button" onClick={() => toggleFold(modelId)} aria-expanded={!isFolded} data-fold-rooms
                         aria-label={isFolded ? t('sidebar.expand.aria', { name: char.characterName }) : t('sidebar.collapse.aria', { name: char.characterName })} title={isFolded ? t('sidebar.expand') : t('sidebar.collapse')}
@@ -182,7 +182,6 @@ export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
                     </div>
                   </div>
 
-                  {/* Soft Pastel HP (Weekly) & MP (5h) Bars */}
                   <button
                     type="button"
                     onClick={() => onOpenUsageModal(modelId)}
@@ -233,10 +232,10 @@ export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
                 </div>
               </div>
 
-              {/* Nested Chat Bubbles representing each room */}
-              <div className="mt-2.5 space-y-1.5">
-                {modelRooms.filter(isShown).map((room) => {
+              <div className={`${visibleRooms.length > 0 || isFolded ? 'mt-2' : ''} flex-1 min-h-0 overflow-y-auto space-y-1 pr-0.5`}>
+                {visibleRooms.map((room) => {
                   const isSelected = room.id === selectedRoomId;
+                  // Folding hides rows without changing their keyboard shortcuts.
                   const shortcut = orderedRooms.indexOf(room) + 1;
                   const isWaiting = room.status === 'waiting_approval';
 
@@ -254,7 +253,6 @@ export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
                           : 'bg-[#FFFDF9]/88 dark:bg-[#171D32]/90 border-[#D9CBB8] dark:border-[#343E61] shadow-[2px_2.5px_0_rgba(110,86,62,0.12)] dark:shadow-[2px_2.5px_0_rgba(6,8,18,0.45)] hover:bg-white dark:hover:bg-[#1E253D] hover:border-[#C5B39D] dark:hover:border-[#495685]'
                       }`}
                     >
-                      {/* Bubble Status Icon */}
                       <div
                         className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
                           isWaiting
@@ -274,7 +272,6 @@ export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
                       </div>
                       {unread[room.id] && !isSelected && <span aria-label={t('sidebar.unread')} className="absolute left-2 top-1.5 h-2 w-2 rounded-full bg-[#D9828B] ring-2 ring-white dark:ring-[#171D32]" />}
 
-                      {/* Room Name & Snippet */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-1.5">
                           <div className="flex min-w-0 items-center gap-1">
@@ -310,6 +307,11 @@ export const LeftCharacterMenu: React.FC<LeftCharacterMenuProps> = ({
           );
         })}
       </div>
+
+      {onSelectGroup && groups.length > 0 && <nav aria-label={t('sidebar.groups')} data-group-chips className="flex shrink-0 flex-nowrap items-center gap-1.5 overflow-x-auto border-t border-[#E6DCD0]/65 bg-[#FBF8F3]/55 px-2.5 py-1.5 backdrop-blur-sm dark:border-[#2E3654]/70 dark:bg-[#192036]/55">
+        {groups.map(group => <button key={group.id} type="button" onClick={() => onSelectGroup(group)} title={t('sidebar.group.title', { name: group.name, count: group.members.length })}
+          className="max-w-[10.5rem] shrink-0 cursor-pointer truncate rounded-full border border-[#D6DCF2]/90 bg-[#EEF0FA]/90 px-2.5 py-1 text-[11px] font-semibold text-[#4D557E] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] transition-all duration-150 hover:border-[#BFC8EC] hover:bg-[#E4E8FA] active:scale-95 dark:border-[#3E4870]/90 dark:bg-[#222947]/90 dark:text-[#C5CBFA] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] dark:hover:bg-[#2B3359]">{t('sidebar.group.name', { name: group.name })}</button>)}
+      </nav>}
     </aside>
   );
 };

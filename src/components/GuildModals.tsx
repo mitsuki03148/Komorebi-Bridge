@@ -1,3 +1,8 @@
+// Contents
+// Create a room — Set up a character and workspace for a new room.
+// Move a room — Change the working folder of an existing room.
+// Check quota use — See today’s usage and when quotas reset.
+
 import { FolderPicker, type FolderListing } from './FolderPicker';
 import { useKeyboardViewport } from '../utils/useKeyboardViewport';
 import { useT } from '../i18n/useLang';
@@ -23,6 +28,9 @@ import { CharacterProfile, CLIModelId } from '../types/guild';
 import { fiveHourQuota, formatPct, formatReset, useEscape, weeklyQuota } from '../utils/roomUi';
 import { focusScope } from '../utils/focusScope';
 import { useTheme } from '../utils/theme';
+
+// ── Create a room ────────────────────────────────────────────────────
+// When opening a new room, choose its character, working folder and launch settings.
 
 interface NewRoomModalProps {
   isOpen: boolean;
@@ -124,7 +132,6 @@ export const NewRoomModal: React.FC<NewRoomModalProps> = ({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
-          {/* Pick Character (瞳 / 光 / 響) */}
           <div>
             <label className="block text-xs font-semibold text-[#5C4D43] dark:text-[#B5BED6] mb-1.5">
               {t('guild.modal.new.character')}
@@ -215,6 +222,9 @@ export const NewRoomModal: React.FC<NewRoomModalProps> = ({
     </div>
   );
 };
+
+// ── Move a room ──────────────────────────────────────────────────────
+// When a room needs a different working folder, open the move dialog from its menu and choose the destination.
 
 export function RoomMoveAction({
   room,
@@ -381,9 +391,17 @@ export function MoveRoomModal({
   );
 }
 
+// ── Check quota use ──────────────────────────────────────────────────
+// When someone opens the quota dialog, show today’s chart and the next quota reset for each character.
+
+interface UsageCalibrationModalProps {
+  isOpen: boolean;
+  characters: Record<CLIModelId, CharacterProfile>;
+  onClose: () => void;
+}
+
 const dayMs = 24 * 60 * 60 * 1000;
 
-/** Today's chart runs from local midnight to the next one, with a label every six hours. */
 export function todayAxis(now: number) {
   const date = new Date(now);
   const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
@@ -398,12 +416,6 @@ export function clockLabel(value: number, dayStart: number, seconds = false) {
   const date = new Date(value);
   const two = (n: number) => String(n).padStart(2, '0');
   return `${two(date.getHours())}:${two(date.getMinutes())}${seconds ? `:${two(date.getSeconds())}` : ''}`;
-}
-
-interface UsageCalibrationModalProps {
-  isOpen: boolean;
-  characters: Record<CLIModelId, CharacterProfile>;
-  onClose: () => void;
 }
 
 export const UsageCalibrationModal: React.FC<UsageCalibrationModalProps> = ({
@@ -477,7 +489,6 @@ export const UsageCalibrationModal: React.FC<UsageCalibrationModalProps> = ({
                   </div>
                 </div>
 
-                {/* Recharts Mini HP/MP Consumption Trend Chart */}
                 <div className="h-28 w-full rounded-xl bg-[#FBF8F3] dark:bg-[#141A2C] border border-[#EFE7DA] dark:border-[#2E3654] px-2 pt-2 pb-1">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart

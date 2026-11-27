@@ -1,3 +1,14 @@
+// Contents
+// - Share command results
+// - Choose rooms for native tests
+// - Find and list rooms
+// - Read dispatch quotas
+// - Connect to the Bridge
+// - Send a direct handoff
+// - Read the latest room activity
+// - Run workbench commands and wake recipients
+// - Read recent handoff outcomes
+
 import { randomUUID } from 'node:crypto';
 import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -8,12 +19,14 @@ import type { CharacterProfile, CLIModelId, GroupChat, TerminalRoom } from '../s
 import { followSuccessor } from './successors';
 import { roomAutoMode } from '../src/utils/launchMode';
 
-/** Exit codes of `komorebi-room`: 0 sent, 1 failed, 2 bad usage, 3 stopped by a rule (tell the Founder, do not wait). */
+// Share command results
+// The CLI prints the lines and exits with 0 for success, 1 for failure, 2 for usage or 3 for a rule stop.
 export type HandoffOutcome = { code: 0 | 1 | 2 | 3; lines: string[] };
 
+// Choose rooms for native tests
+// The workspace list stores the Founder's preferred rooms, and group roles can also designate rooms.
 export const nativeTestFile = (workspace: string) => join(workspace, '.komorebi-native-test-room.json');
 
-/** The AGY rooms native tests may go to, in the Founder's order of preference (the first one that is free is used). */
 export function readNativeTestRooms(workspace: string): string[] {
   try {
     const saved = JSON.parse(readFileSync(nativeTestFile(workspace), 'utf8'));
@@ -30,21 +43,6 @@ export function writeNativeTestRooms(workspace: string, roomIds: string[]) {
     writeFileSync(temporary, JSON.stringify({ roomIds }), { mode: 0o600, flag: 'wx' });
     renameSync(temporary, path);
   } finally { try { unlinkSync(temporary); } catch { /* The rename removed it. */ } }
-}
-
-export type Found = { room: TerminalRoom } | { error: string };
-
-/** A room by id, session id, exact name, or a unique part of its name. */
-export function findRoom(rooms: TerminalRoom[], query: string): Found {
-  const wanted = query.trim().toLowerCase();
-  if (!wanted) return { error: '請指明房間。' };
-  const exact = rooms.filter(room => room.id.toLowerCase() === wanted || room.sessionId?.toLowerCase() === wanted);
-  const byName = rooms.filter(room => room.roomName.toLowerCase() === wanted);
-  const partial = rooms.filter(room => room.roomName.toLowerCase().includes(wanted));
-  const hits = exact.length ? exact : byName.length ? byName : partial;
-  if (hits.length === 1) return { room: hits[0] };
-  if (!hits.length) return { error: `找不到房間「${query}」。` };
-  return { error: `「${query}」對應多間房，請用房名全名或 Session ID：\n${hits.map(room => `  ${room.modelId} · ${room.roomName} · ${room.sessionId ?? room.id}`).join('\n')}` };
 }
 
 /** Designated rooms are kept by Session ID (the CLI's own id), so they survive Komorebi renumbering its rooms. */
@@ -67,6 +65,46 @@ export function groupNativeTestRooms(rooms: Map<string, TerminalRoom>, groups: G
   return [...found.values()];
 }
 
+export async function nativeTestRoom(url: string, action: 'show' | 'set' | 'clear', queries: string[] = []): Promise<HandoffOutcome> {
+  let link: Link;
+  try { link = await Link.open(url); }
+  catch (error) { return { code: 1, lines: [error instanceof Error ? error.message : '連不到 Bridge。'] }; }
+  try {
+    const current = readNativeTestRooms(link.workspace);
+    if (action === 'show') {
+      return { code: 0, lines: current.length ? current.map((entry, index) => `${index + 1}. ${designatedRoom(link.rooms, entry)?.roomName ?? '（房已不存在）'}（${entry}）`) : ['未指定 native test 房。'] };
+    }
+    if (action === 'clear') { writeNativeTestRooms(link.workspace, []); return { code: 0, lines: ['已取消指定。'] }; }
+    // Rooms are given in order of preference; a session id is the sure way to name one (room names repeat).
+    const chosen: TerminalRoom[] = [];
+    for (const query of queries) {
+      const found = findRoom([...link.rooms.values()], query);
+      if ('error' in found) return { code: 2, lines: [found.error] };
+      if (!chosen.includes(found.room)) chosen.push(found.room);
+    }
+    if (!chosen.length) return { code: 2, lines: ['請指明房間。'] };
+    writeNativeTestRooms(link.workspace, chosen.map(room => room.sessionId ?? room.id));
+    return { code: 0, lines: ['已指定 native test 房（按優先次序）：', ...chosen.map((room, index) => `${index + 1}. ${room.roomName}（${room.sessionId ?? room.id}）`)] };
+  } finally { link.close(); }
+}
+
+// Find and list rooms
+// Match room names and identifiers, then show state, permission mode and native-test rank.
+export type Found = { room: TerminalRoom } | { error: string };
+
+/** A room by id, session id, exact name, or a unique part of its name. */
+export function findRoom(rooms: TerminalRoom[], query: string): Found {
+  const wanted = query.trim().toLowerCase();
+  if (!wanted) return { error: '請指明房間。' };
+  const exact = rooms.filter(room => room.id.toLowerCase() === wanted || room.sessionId?.toLowerCase() === wanted);
+  const byName = rooms.filter(room => room.roomName.toLowerCase() === wanted);
+  const partial = rooms.filter(room => room.roomName.toLowerCase().includes(wanted));
+  const hits = exact.length ? exact : byName.length ? byName : partial;
+  if (hits.length === 1) return { room: hits[0] };
+  if (!hits.length) return { error: `找不到房間「${query}」。` };
+  return { error: `「${query}」對應多間房，請用房名全名或 Session ID：\n${hits.map(room => `  ${room.modelId} · ${room.roomName} · ${room.sessionId ?? room.id}`).join('\n')}` };
+}
+
 export const roomState = (room: TerminalRoom) =>
   !room.live ? '未開' : room.pendingApproval ? '等待審批' : room.ready ? '閒' : room.steerable ? '工作中（可 steer）' : '忙';
 
@@ -79,6 +117,19 @@ export function listLines(rooms: TerminalRoom[], modes: LaunchModes | null, nati
   ].filter(Boolean).join(' '));
 }
 
+export async function listRooms(url: string): Promise<HandoffOutcome> {
+  let link: Link;
+  try { link = await Link.open(url); }
+  catch (error) { return { code: 1, lines: [error instanceof Error ? error.message : '連不到 Bridge。'] }; }
+  try {
+    const rooms = [...link.rooms.values()].sort((a, b) => Number(Boolean(b.live)) - Number(Boolean(a.live)));
+    const quota = quotaLines(link.characters);
+    return { code: 0, lines: [...listLines(rooms, link.modes, readNativeTestRooms(link.workspace)), ...(quota.length ? ['', ...quota] : [])] };
+  } finally { link.close(); }
+}
+
+// Read dispatch quotas
+// Routing uses the reported allowance, while the CLI displays whole percentages.
 /** Below these the Orchestrator does not hand work to 響 or 瞳: MP (the 5-hour allowance) under 10%, or HP (the weekly one) under 5%, left. */
 export const dispatchFloor = { mp: 10, hp: 5 } as const;
 
@@ -112,21 +163,18 @@ export function quotaLines(characters: Partial<Record<CLIModelId, CharacterProfi
   return lines.length > 1 ? lines : [];
 }
 
-export interface SendOptions {
-  url: string;
-  query: string;
-  text: string;
-  from?: string;
-  /** The message hands a native (Xcode / Simulator) test to a room the Founder named for it (any CLI): only the Founder's rooms, and only one that is free. Use the room "native-test" to take the first free one. */
-  nativeTest?: boolean;
-  /** Send even if the room asks for approval (only when the Founder is watching). */
-  allowAsk?: boolean;
-  /** How long to wait for a busy CLI that cannot be steered, and for a closed room to open. */
-  waitSeconds?: number;
-  /** A stored named workbench ticket has already resolved its recipient. */
-  benchRecipient?: boolean;
+export async function quotaStatus(url: string): Promise<HandoffOutcome> {
+  let link: Link;
+  try { link = await Link.open(url); }
+  catch (error) { return { code: 1, lines: [error instanceof Error ? error.message : '連不到 Bridge。'] }; }
+  try {
+    const lines = quotaLines(link.characters);
+    return lines.length ? { code: 0, lines } : { code: 1, lines: ['Bridge 未提供額度（可能未更新，請 Founder 重啟 Bridge）。'] };
+  } finally { link.close(); }
 }
 
+// Connect to the Bridge
+// Keep the room snapshot current and wait for replies on the same connection.
 type Snapshot = Extract<ServerEvent, { type: 'SNAPSHOT' }>;
 
 class Link {
@@ -190,6 +238,23 @@ class Link {
   }
 }
 
+// Send a direct handoff
+// Resolve a recipient and check room readiness before sending a message.
+export interface SendOptions {
+  url: string;
+  query: string;
+  text: string;
+  from?: string;
+  /** The message hands a native (Xcode / Simulator) test to a room the Founder named for it (any CLI): only the Founder's rooms, and only one that is free. Use the room "native-test" to take the first free one. */
+  nativeTest?: boolean;
+  /** Send even if the room asks for approval (only when the Founder is watching). */
+  allowAsk?: boolean;
+  /** How long to wait for a busy CLI that cannot be steered, and for a closed room to open. */
+  waitSeconds?: number;
+  /** A stored named workbench ticket has already resolved its recipient. */
+  benchRecipient?: boolean;
+}
+
 const stop = (message: string): HandoffOutcome => ({ code: 3, lines: [`STOP：${message}`] });
 
 const roomKey = (room: TerminalRoom) => room.sessionId ?? room.id;
@@ -235,7 +300,7 @@ function routeHint(link: Link, room: TerminalRoom, from?: string): string[] {
   return lines;
 }
 
-/** Tell the Bridge how a handoff ended, so a failure can be read back later. Best effort: it never changes the outcome or holds it up. */
+// Reporting waits up to two seconds and leaves the original send result intact.
 async function reportHandoff(url: string, report: { from?: string; to?: string; code: number; ms: number; note: string }) {
   await new Promise<void>(resolve => {
     let socket: WebSocket;
@@ -346,17 +411,8 @@ async function sendHandoffInner(options: SendOptions, meta: { to?: string }): Pr
   } finally { link.close(); }
 }
 
-export async function listRooms(url: string): Promise<HandoffOutcome> {
-  let link: Link;
-  try { link = await Link.open(url); }
-  catch (error) { return { code: 1, lines: [error instanceof Error ? error.message : '連不到 Bridge。'] }; }
-  try {
-    const rooms = [...link.rooms.values()].sort((a, b) => Number(Boolean(b.live)) - Number(Boolean(a.live)));
-    const quota = quotaLines(link.characters);
-    return { code: 0, lines: [...listLines(rooms, link.modes, readNativeTestRooms(link.workspace)), ...(quota.length ? ['', ...quota] : [])] };
-  } finally { link.close(); }
-}
-
+// Read the latest room activity
+// Show recent messages, pending prompts and an optional screen tail.
 export interface ReadOptions {
   /** How many of the latest messages to show. */
   messages?: number;
@@ -405,6 +461,8 @@ export async function readRoom(url: string, query: string, options: ReadOptions 
   } finally { link.close(); }
 }
 
+// Run workbench commands and wake recipients
+// The reservation fixes the recipient. Older Bridges return a legacy ping.
 /** Exact workbench delivery goes through the stored reservation; it never calls resolveTarget or sends a client prompt. */
 async function sendFixedBenchWake(url: string, wake: FixedBenchWake): Promise<HandoffOutcome> {
   let link: Link;
@@ -478,29 +536,8 @@ export async function benchCommand(url: string, action: string, fields: Record<s
   return woken.code === 3 ? { code: 3, lines: [...lines, 'STOP：請交 Founder 處理（工單仍在對方工作台）。'] } : { code: 0, lines: [...lines, '對方下次工作時會收到。'] };
 }
 
-export async function nativeTestRoom(url: string, action: 'show' | 'set' | 'clear', queries: string[] = []): Promise<HandoffOutcome> {
-  let link: Link;
-  try { link = await Link.open(url); }
-  catch (error) { return { code: 1, lines: [error instanceof Error ? error.message : '連不到 Bridge。'] }; }
-  try {
-    const current = readNativeTestRooms(link.workspace);
-    if (action === 'show') {
-      return { code: 0, lines: current.length ? current.map((entry, index) => `${index + 1}. ${designatedRoom(link.rooms, entry)?.roomName ?? '（房已不存在）'}（${entry}）`) : ['未指定 native test 房。'] };
-    }
-    if (action === 'clear') { writeNativeTestRooms(link.workspace, []); return { code: 0, lines: ['已取消指定。'] }; }
-    // Rooms are given in order of preference; a session id is the sure way to name one (room names repeat).
-    const chosen: TerminalRoom[] = [];
-    for (const query of queries) {
-      const found = findRoom([...link.rooms.values()], query);
-      if ('error' in found) return { code: 2, lines: [found.error] };
-      if (!chosen.includes(found.room)) chosen.push(found.room);
-    }
-    if (!chosen.length) return { code: 2, lines: ['請指明房間。'] };
-    writeNativeTestRooms(link.workspace, chosen.map(room => room.sessionId ?? room.id));
-    return { code: 0, lines: ['已指定 native test 房（按優先次序）：', ...chosen.map((room, index) => `${index + 1}. ${room.roomName}（${room.sessionId ?? room.id}）`)] };
-  } finally { link.close(); }
-}
-
+// Read recent handoff outcomes
+// The CLI can request only failed entries.
 /** The recent `send` outcomes the Bridge has kept (newest last), for finding out what happened to a message that did not arrive. */
 export async function handoffLog(url: string, options: { last?: number; failedOnly?: boolean } = {}): Promise<HandoffOutcome> {
   let link: Link;
@@ -518,15 +555,4 @@ export async function handoffLog(url: string, options: { last?: number; failedOn
     }) };
   } catch (error) { return { code: 1, lines: [error instanceof Error ? error.message : '讀取失敗。'] }; }
   finally { link.close(); }
-}
-
-/** Only the allowance each character has left (the end of `list`, on its own). */
-export async function quotaStatus(url: string): Promise<HandoffOutcome> {
-  let link: Link;
-  try { link = await Link.open(url); }
-  catch (error) { return { code: 1, lines: [error instanceof Error ? error.message : '連不到 Bridge。'] }; }
-  try {
-    const lines = quotaLines(link.characters);
-    return lines.length ? { code: 0, lines } : { code: 1, lines: ['Bridge 未提供額度（可能未更新，請 Founder 重啟 Bridge）。'] };
-  } finally { link.close(); }
 }

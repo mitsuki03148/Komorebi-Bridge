@@ -1,3 +1,7 @@
+// Contents
+// Guild Hall welcome — Show the illustrated landing page and room status.
+// Choose a group on mobile — Open a group from the edge of the screen.
+
 import { useEffect, useRef, useState } from 'react';
 import { Check, Users } from 'lucide-react';
 import { useT } from '../i18n/useLang';
@@ -8,384 +12,9 @@ import { useTheme } from '../utils/theme';
 import { CornerFloralSprig } from './BotanicalAccents';
 import { debutMeta } from './EmptyRoomState';
 
-type TrioFaceSpec = {
-  modelId: CLIModelId;
-  skinColor: string;
-  skin: string;
-  crease: string;
-  lids: string;
-  cheeks: [number, number][];
-};
+// ── Guild Hall welcome ───────────────────────────────────────────────
+// Show room status over day or night artwork when no room is selected.
 
-const TRIO_FACES: TrioFaceSpec[] = [
-  {
-    modelId: 'CODEX',
-    skinColor: '#F7E2CE',
-    skin: 'M356 183 Q380 171 404 193 Q380 212 356 183Z M427 198 Q445 193 463 200 Q446 229 427 198Z',
-    crease: 'M363 177 Q382 173 398 183 M431 196 Q446 193 459 198',
-    lids: 'M359 186 Q381 196 401 193 M429 203 Q445 212 460 203',
-    cheeks: [[364, 210], [449, 218]],
-  },
-  {
-    modelId: 'AGY',
-    skinColor: '#FDE7D4',
-    skin: 'M535 292 Q562 277 588 289 Q563 332 535 292Z M610 290 Q636 275 663 294 Q636 332 610 290Z',
-    crease: 'M544 282 Q562 276 581 284 M616 284 Q636 276 655 284',
-    lids: 'M539 296 Q562 309 584 295 M613 295 Q636 309 659 297',
-    cheeks: [[552, 323], [646, 323]],
-  },
-  {
-    modelId: 'CLAUDE',
-    skinColor: '#FCE2CD',
-    skin: 'M789 203 Q804 192 821 201 Q805 234 789 203Z M839 184 Q859 171 879 182 Q860 216 839 184Z',
-    crease: 'M792 198 Q805 193 817 198 M843 178 Q859 173 874 179',
-    lids: 'M790 207 Q804 214 819 205 M841 187 Q859 195 876 185',
-    cheeks: [[794, 224], [872, 209]],
-  },
-];
-
-function TrioExpression() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 1200 896" preserveAspectRatio="xMidYMax meet" data-trio-expression
-      className="pointer-events-none absolute inset-0 h-full w-full">
-      {TRIO_FACES.map(face => (
-        <g key={face.modelId} data-cli={face.modelId} className="guild-chibi-blink">
-          <path d={face.skin} fill={face.skinColor} />
-          <path d={face.crease} fill="none" stroke="#B98E76" strokeWidth="1.8" strokeLinecap="round" opacity="0.55" />
-          <path d={face.lids} fill="none" stroke="#52362A" strokeWidth="3.2" strokeLinecap="round" />
-        </g>
-      ))}
-      {TRIO_FACES.map(face => (
-        <g key={`smile-${face.modelId}`} data-cli={face.modelId} className="guild-chibi-smile">
-          {face.cheeks.map(([cx, cy]) => (
-            <ellipse key={cx} cx={cx} cy={cy} rx="14" ry="7.5" fill="#E88580" opacity="0.26" />
-          ))}
-        </g>
-      ))}
-    </svg>
-  );
-}
-
-const SCROLL_SHEET_WIDTH = 236;
-
-function GroupCloverIcon({ group }: { group: GroupChat }) {
-  const present = new Set(group.members.map(member => member.modelId));
-  if (group.members.length === 0) {
-    return <Users className="h-3.5 w-3.5 text-[#8A6420] dark:text-[#E8C27A]" aria-hidden="true" />;
-  }
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" aria-hidden="true">
-      <circle cx="12" cy="7.4" r="4.1" fill="#7FA889" fillOpacity={present.has('CODEX') ? 0.94 : 0.22} />
-      <circle cx="8" cy="14.3" r="4.1" fill="#E3A0AC" fillOpacity={present.has('AGY') ? 0.94 : 0.22} />
-      <circle cx="16" cy="14.3" r="4.1" fill="#8FA8DC" fillOpacity={present.has('CLAUDE') ? 0.94 : 0.22} />
-      <circle cx="12" cy="12" r="2.1" fill="#F8DF99" />
-    </svg>
-  );
-}
-
-/**
- * Right-edge hidden swipe-out parchment scroll menu for mobile Guild Hall:
- * pulling left unrolls the parchment scroll with viscous damping; picking a group flashes tactile
- * visual feedback, springs the scroll back into the right edge, and transitions after ~0.5s;
- * tapping empty space rolls it back up.
- */
-export function MobileGroupScrollDrawer({
-  groups,
-  working,
-  onSelectGroup,
-}: {
-  groups: GroupChat[];
-  working: Record<string, 'working' | 'stalled'>;
-  onSelectGroup: (group: GroupChat) => void;
-}) {
-  const { t } = useT();
-  const [open, setOpen] = useState(false);
-  const [dragUnroll, setDragUnroll] = useState<number | null>(null);
-  const [pickedId, setPickedId] = useState<string | null>(null);
-  const dragState = useRef<{ startX: number; startY: number; baseOpen: boolean; moved: boolean } | null>(null);
-  const timers = useRef<number[]>([]);
-
-  useEffect(() => () => { timers.current.forEach(window.clearTimeout); }, []);
-
-  const anyGroupWorking = groups.some(group => group.members.some(member => Boolean(working[member.roomId])));
-  const currentUnroll = dragUnroll !== null ? dragUnroll : open ? SCROLL_SHEET_WIDTH : 0;
-  const translateX = Math.max(0, SCROLL_SHEET_WIDTH - currentUnroll);
-  const isShowing = open || dragUnroll !== null;
-
-  const beginDrag = (clientX: number, clientY: number) => {
-    if (pickedId) return;
-    dragState.current = { startX: clientX, startY: clientY, baseOpen: open, moved: false };
-  };
-
-  const moveDrag = (clientX: number, clientY: number) => {
-    const state = dragState.current;
-    if (!state) return;
-    const dx = state.startX - clientX;
-    const dy = clientY - state.startY;
-    if (!state.moved && Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
-    if (!state.moved && Math.abs(dy) > Math.abs(dx) * 1.35) {
-      dragState.current = null;
-      return;
-    }
-    state.moved = true;
-    if (!state.baseOpen) {
-      // Viscous parchment unrolling resistance when pulling left from closed
-      const raw = Math.max(0, dx);
-      const damped = SCROLL_SHEET_WIDTH * (1 - Math.exp(-raw / (SCROLL_SHEET_WIDTH * 0.72)));
-      setDragUnroll(Math.min(SCROLL_SHEET_WIDTH + 10, damped));
-    } else {
-      // Damped roll-back when pushing right from open
-      const rawRight = Math.max(0, -dx);
-      const damped = Math.max(0, SCROLL_SHEET_WIDTH - rawRight * 0.78);
-      setDragUnroll(damped);
-    }
-  };
-
-  const endDrag = () => {
-    const state = dragState.current;
-    dragState.current = null;
-    if (!state) return;
-    if (!state.moved) {
-      navigator.vibrate?.(8);
-      setOpen(prev => !prev);
-      setDragUnroll(null);
-      return;
-    }
-    const finalUnroll = dragUnroll ?? (state.baseOpen ? SCROLL_SHEET_WIDTH : 0);
-    const shouldOpen = state.baseOpen
-      ? finalUnroll > SCROLL_SHEET_WIDTH * 0.68
-      : finalUnroll > SCROLL_SHEET_WIDTH * 0.26;
-    navigator.vibrate?.(6);
-    setOpen(shouldOpen);
-    setDragUnroll(null);
-  };
-
-  const handlePickGroup = (group: GroupChat, button: HTMLButtonElement) => {
-    if (pickedId) return;
-    burstPetals(button, { count: 5 });
-    navigator.vibrate?.(14);
-    setPickedId(group.id);
-    // Instant visual flash on tap, then snap the scroll back and switch rooms immediately
-    const t1 = window.setTimeout(() => {
-      setOpen(false);
-      setDragUnroll(null);
-    }, 35);
-    const t2 = window.setTimeout(() => {
-      setPickedId(null);
-      onSelectGroup(group);
-    }, 150);
-    timers.current.push(t1, t2);
-  };
-
-  return (
-    <div className="sm:hidden">
-      {/* Tap empty space to dismiss and roll the parchment scroll back in */}
-      {isShowing && currentUnroll > 4 && (
-        <div
-          aria-hidden="true"
-          onClick={() => {
-            if (pickedId) return;
-            navigator.vibrate?.(6);
-            setOpen(false);
-            setDragUnroll(null);
-          }}
-          style={{ opacity: Math.min(1, currentUnroll / SCROLL_SHEET_WIDTH) * 0.32 }}
-          className=" absolute inset-0 z-20 bg-[#2C1F14] dark:bg-[#060812] transition-opacity duration-300"
-        />
-      )}
-
-      {/* Right-edge invisible touch swipe zone so swiping left from anywhere near the right lantern edge pulls the scroll out */}
-      {!open && (
-        <div
-          aria-hidden="true"
-          onTouchStart={e => beginDrag(e.touches[0].clientX, e.touches[0].clientY)}
-          onTouchMove={e => moveDrag(e.touches[0].clientX, e.touches[0].clientY)}
-          onTouchEnd={endDrag}
-          onTouchCancel={endDrag}
-          className="absolute top-[24%] right-0 bottom-[18%] z-20 w-8"
-        />
-      )}
-
-      {/* Rolled Parchment Scroll Assembly anchored to the right edge */}
-      <aside
-        data-mobile-group-scroll
-        aria-label={t('topbar.group.menu')}
-        onTouchStart={e => beginDrag(e.touches[0].clientX, e.touches[0].clientY)}
-        onTouchMove={e => moveDrag(e.touches[0].clientX, e.touches[0].clientY)}
-        onTouchEnd={endDrag}
-        onTouchCancel={endDrag}
-        style={{
-          transform: `translate3d(${translateX}px, -50%, 0)`,
-          transition: dragUnroll !== null
-            ? 'none'
-            : pickedId
-              ? 'transform 135ms cubic-bezier(0.35, 0, 0.25, 1)'
-              : 'transform 280ms cubic-bezier(0.22, 1.04, 0.36, 1)',
-        }}
-        className="absolute top-[42%] right-0 z-30 flex items-center select-none"
-      >
-        {/* Leading Left Cylindrical Parchment Roller Handle (always peeking out at right edge when rolled up) */}
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-label={t('topbar.group.choose')}
-          title={t('topbar.group.choose')}
-          onPointerDown={e => {
-            if (e.pointerType === 'touch') return;
-            e.currentTarget.setPointerCapture?.(e.pointerId);
-            beginDrag(e.clientX, e.clientY);
-          }}
-          onPointerMove={e => {
-            if (e.pointerType === 'touch' || !dragState.current) return;
-            moveDrag(e.clientX, e.clientY);
-          }}
-          onPointerUp={e => {
-            if (e.pointerType === 'touch') return;
-            endDrag();
-          }}
-          className="relative z-20 -mr-1.5 flex h-28 w-7 shrink-0 flex-col items-center justify-between rounded-l-2xl border-[1.5px] border-[#A88246] dark:border-[#785E38] bg-[linear-gradient(90deg,#DFC28F_0%,#FFF8E8_36%,#F1DEB8_74%,#C29D61_100%)] dark:bg-[linear-gradient(90deg,#231B12_0%,#3D3020_38%,#2A2015_76%,#18120B_100%)] py-1 shadow-[-4px_4px_14px_rgba(70,48,20,0.32),inset_1px_0_0_rgba(255,253,244,0.85)] dark:shadow-[-5px_4px_16px_rgba(0,0,0,0.68)] cursor-grab active:cursor-grabbing"
-        >
-          {/* Top turned-wood scroll finial cap */}
-          <span aria-hidden="true" className="-mt-2.5 h-2.5 w-5 rounded-t-full border border-[#4E3316] bg-[linear-gradient(90deg,#5C3D1C_0%,#9E723D_48%,#472E14_100%)] shadow-xs" />
-          {/* Inner vertical stitch lines */}
-          <span aria-hidden="true" className="pointer-events-none absolute inset-y-2.5 left-1 right-1 rounded-l-xl border-l border-dashed border-[#B99252]/75 dark:border-[#8C6E42]/60" />
-
-          {/* Embroidered Gold-Thread Stitched Chevron Emblem on the Roller (no number badge) */}
-          <span className="relative flex items-center justify-center">
-            <svg
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              className={`h-5 w-5 text-[#9C6E21] drop-shadow-[0_1px_0_rgba(255,252,240,0.85)] transition-transform duration-300 dark:text-[#DFB968] dark:drop-shadow-[0_1px_1px_rgba(0,0,0,0.75)] ${open ? 'rotate-180' : ''}`}
-            >
-              {/* Outer embroidered running-stitch medallion ring */}
-              <circle
-                cx="12"
-                cy="12"
-                r="9.2"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.25"
-                strokeDasharray="2.3 1.9"
-                strokeLinecap="round"
-                opacity="0.72"
-              />
-              {/* Hand-stitched embroidered chevron arrow (<) */}
-              <path
-                d="M14.4 7.2 L9.2 12 L14.4 16.8"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.1"
-                strokeDasharray="2.4 1.55"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              {/* Tiny French-knot stitch dots at top & bottom */}
-              <circle cx="12" cy="4.9" r="0.85" fill="currentColor" opacity="0.75" />
-              <circle cx="12" cy="19.1" r="0.85" fill="currentColor" opacity="0.75" />
-            </svg>
-            {anyGroupWorking && (
-              <svg viewBox="0 0 12 12" aria-hidden="true" className="guild-crown-sparkle pointer-events-none absolute -top-1 -left-0.5 h-2.5 w-2.5 text-[#F4BE37] dark:text-[#FFE48F]">
-                <path d="M6 0.5 C6.45 4 8 5.55 11.5 6 C8 6.45 6.45 8 6 11.5 C5.55 8 4 6.45 0.5 6 C4 5.55 5.55 4 6 0.5 Z" fill="currentColor" />
-              </svg>
-            )}
-          </span>
-
-          {/* Bottom turned-wood scroll finial cap */}
-          <span aria-hidden="true" className="-mb-2.5 h-2.5 w-5 rounded-b-full border border-[#4E3316] bg-[linear-gradient(90deg,#5C3D1C_0%,#9E723D_48%,#472E14_100%)] shadow-xs" />
-        </button>
-
-        {/* Unfurled Parchment Scroll Sheet holding the Group Chat Room List */}
-        <div
-          style={{ width: SCROLL_SHEET_WIDTH }}
-          className="relative overflow-hidden rounded-l-[20px] border-y-[1.5px] border-l-[1.5px] border-[#B69256] dark:border-[#785E38] bg-[linear-gradient(165deg,#FFF9EB_0%,#F6E9CE_52%,#EEDBB8_100%)] dark:bg-[linear-gradient(165deg,#2D2419_0%,#231C13_55%,#1C160F_100%)] py-3 pr-3 pl-4 shadow-[-10px_12px_28px_-8px_rgba(70,48,20,0.38),inset_0_1.5px_0_rgba(255,253,245,0.9)] dark:shadow-[-12px_14px_32px_-6px_rgba(0,0,0,0.78),inset_0_1px_0_rgba(255,230,180,0.12)]"
-        >
-          {/* Inner dashed parchment stitch border */}
-          <span aria-hidden="true" className="pointer-events-none absolute inset-1.5 rounded-l-[14px] border border-r-0 border-dashed border-[#C9A86A]/85 dark:border-[#856A3F]/60" />
-          {/* Right edge rolled-paper shadow depth */}
-          <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 w-2.5 bg-[linear-gradient(90deg,transparent_0%,rgba(140,100,45,0.22)_100%)] dark:bg-[linear-gradient(90deg,transparent_0%,rgba(0,0,0,0.48)_100%)]" />
-
-          {/* Scroll Header Ribbon */}
-          <div className="relative mb-2 flex items-center justify-between gap-2 rounded-xl border border-[#DEC492]/90 bg-[#FFFDF6]/82 px-2.5 py-1.5 shadow-[0_2px_0_rgba(140,104,52,0.12)] dark:border-[#5E4B2E] dark:bg-[#19140E]/78">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5 shrink-0">
-                {[0, 72, 144, 216, 288].map(angle => (
-                  <ellipse key={angle} cx="10" cy="5.3" rx="2.9" ry="4.3" transform={`rotate(${angle} 10 10)`} fill="#E69AA8" />
-                ))}
-                <circle cx="10" cy="10" r="2.1" fill="#FBE79C" />
-              </svg>
-              <span className="truncate font-display text-xs font-extrabold tracking-wide text-[#43321B] dark:text-[#F3E6CA]">
-                {t('topbar.group.label')}
-              </span>
-            </div>
-            <span className="shrink-0 rounded-full border border-[#DEC492]/80 bg-[#F3E4C4]/80 px-2 py-0.5 font-mono text-[10px] font-bold text-[#6B5527] dark:border-[#5C492C] dark:bg-[#33291A]/85 dark:text-[#D6C390]">
-              {groups.length}
-            </span>
-          </div>
-
-          {/* Scrollable Group Chat Room Cards */}
-          <div className="relative max-h-[46dvh] space-y-1.5 overflow-y-auto pr-0.5">
-            {groups.map(group => {
-              const isPicked = pickedId === group.id;
-              const groupWorking = group.members.some(member => Boolean(working[member.roomId]));
-              return (
-                <button
-                  key={group.id}
-                  type="button"
-                  data-scroll-group-id={group.id}
-                  onClick={e => handlePickGroup(group, e.currentTarget)}
-                  className={`relative flex w-full items-center gap-2 rounded-xl border-[1.5px] px-2.5 py-2 text-left transition-all duration-200 cursor-pointer ${
-                    isPicked
-                      ? 'scale-[1.03] border-[#C86D7D] bg-[linear-gradient(165deg,#FFF2F5_0%,#FAD9E1_100%)] text-[#5C2432] ring-2 ring-[#D9828B]/65 shadow-[2px_3px_0_rgba(166,87,114,0.32)] dark:border-[#EFA4B2] dark:bg-[linear-gradient(165deg,#3E2434_0%,#2E1A26_100%)] dark:text-[#FADCE4]'
-                      : 'border-[#DEC9A0] bg-[#FFFDF8]/90 text-[#43321B] shadow-[1.5px_2px_0_rgba(130,96,48,0.16)] hover:border-[#C7A66B] active:scale-[0.98] dark:border-[#54432B] dark:bg-[#171310]/82 dark:text-[#F2E9D8] dark:shadow-[1.5px_2px_0_rgba(0,0,0,0.42)]'
-                  }`}
-                >
-                  <span className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[#E5D2B0] bg-[#FFFBF2] shadow-2xs dark:border-[#4F3F29] dark:bg-[#231C14]">
-                    <GroupCloverIcon group={group} />
-                    {groupWorking && (
-                      <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#D99B26] opacity-75" />
-                        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#E5A93B]" />
-                      </span>
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-display text-[12.5px] font-bold leading-tight">
-                      {group.name}
-                    </span>
-                    <span className="block truncate text-[10px] font-semibold text-[#7A6430] dark:text-[#CDBA88]">
-                      {t('topbar.group.members', { count: group.members.length })}
-                    </span>
-                  </span>
-                  <span
-                    aria-hidden="true"
-                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-transform ${
-                      isPicked
-                        ? 'scale-110 border-[#B84A5E] bg-[#C85A6E] text-white shadow-xs'
-                        : 'border-[#DEC492] bg-[#F6E8CC] text-[#7A5B2B] dark:border-[#5C492C] dark:bg-[#2E2417] dark:text-[#D6C390]'
-                    }`}
-                  >
-                    {isPicked ? <Check className="h-3 w-3 stroke-[2.8]" /> : <span className="text-[10px] leading-none">✦</span>}
-                  </span>
-                </button>
-              );
-            })}
-            {groups.length === 0 && (
-              <p className="rounded-xl border border-dashed border-[#D6BE92] bg-[#FFFDF8]/75 px-3 py-3 text-center text-xs font-semibold text-[#7A6430] dark:border-[#54432B] dark:bg-[#171310]/65 dark:text-[#CDBA88]">
-                {t('topbar.group.empty')}
-              </p>
-            )}
-          </div>
-        </div>
-      </aside>
-    </div>
-  );
-}
-
-/**
- * Independent Mac desktop welcome stage when no room is open yet:
- * a single unified watercolor artwork of Hikaru, Hitomi, and Hibiki standing still in the sunlit Komorebi guild hall,
- * with quiet staggered eye blinks, drifting sunbeams, bokeh orbs, and botanical petals.
- */
 export function GuildHallHome({
   characters,
   rooms,
@@ -437,7 +66,6 @@ export function GuildHallHome({
           style={{ background: isDark
             ? 'radial-gradient(ellipse, rgba(244,199,126,0.22) 0%, rgba(142,156,230,0.14) 48%, transparent 74%)'
             : 'radial-gradient(ellipse, rgba(255,241,206,0.68) 0%, rgba(242,202,210,0.22) 45%, transparent 74%)' }} />
-        {/* Night twinkling stars (starry guild atmosphere) */}
         {isDark && [
           { left: 11, top: 14, size: 3, delay: '0s' },
           { left: 26, top: 9, size: 2.5, delay: '1.1s' },
@@ -469,7 +97,6 @@ export function GuildHallHome({
         ))}
       </div>
 
-      {/* Top-Left Komorebi Guild Hall Nameplate floating cleanly in the upper-left air space */}
       <div className="guild-stage-enter pointer-events-none absolute top-2 left-2.5 right-auto z-20 sm:top-5 sm:left-7">
         <div className="relative flex w-fit max-w-full items-center gap-2 rounded-xl border border-[#E2D5C3]/85 dark:border-[#343D5E]/85 bg-[#FFFDF9]/68 dark:bg-[#171D31]/76 px-2.5 py-1.5 sm:gap-3 sm:rounded-2xl sm:px-4 sm:py-2.5 shadow-[0_8px_22px_rgba(92,75,64,0.08)] dark:shadow-[0_12px_28px_rgba(6,8,18,0.45)] backdrop-blur-md">
           <CornerFloralSprig modelId="AGY" size={18} className="absolute -top-1.5 -right-1.5 opacity-90 sm:h-5 sm:w-5" />
@@ -581,6 +208,315 @@ export function GuildHallHome({
           onSelectGroup={onSelectGroup}
         />
       )}
+    </div>
+  );
+}
+
+// ── Choose a group on mobile ─────────────────────────────────────────
+// Keep groups within reach in views without the desktop sidebar.
+
+const SCROLL_SHEET_WIDTH = 236;
+
+function GroupCloverIcon({ group }: { group: GroupChat }) {
+  const present = new Set(group.members.map(member => member.modelId));
+  if (group.members.length === 0) {
+    return <Users className="h-3.5 w-3.5 text-[#8A6420] dark:text-[#E8C27A]" aria-hidden="true" />;
+  }
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" aria-hidden="true">
+      <circle cx="12" cy="7.4" r="4.1" fill="#7FA889" fillOpacity={present.has('CODEX') ? 0.94 : 0.22} />
+      <circle cx="8" cy="14.3" r="4.1" fill="#E3A0AC" fillOpacity={present.has('AGY') ? 0.94 : 0.22} />
+      <circle cx="16" cy="14.3" r="4.1" fill="#8FA8DC" fillOpacity={present.has('CLAUDE') ? 0.94 : 0.22} />
+      <circle cx="12" cy="12" r="2.1" fill="#F8DF99" />
+    </svg>
+  );
+}
+
+export function MobileGroupScrollDrawer({
+  groups,
+  working,
+  onSelectGroup,
+}: {
+  groups: GroupChat[];
+  working: Record<string, 'working' | 'stalled'>;
+  onSelectGroup: (group: GroupChat) => void;
+}) {
+  const { t } = useT();
+  const [open, setOpen] = useState(false);
+  const [dragUnroll, setDragUnroll] = useState<number | null>(null);
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const dragState = useRef<{ startX: number; startY: number; baseOpen: boolean; moved: boolean } | null>(null);
+  const timers = useRef<number[]>([]);
+
+  useEffect(() => () => { timers.current.forEach(window.clearTimeout); }, []);
+
+  const anyGroupWorking = groups.some(group => group.members.some(member => Boolean(working[member.roomId])));
+  const currentUnroll = dragUnroll !== null ? dragUnroll : open ? SCROLL_SHEET_WIDTH : 0;
+  const translateX = Math.max(0, SCROLL_SHEET_WIDTH - currentUnroll);
+  const isShowing = open || dragUnroll !== null;
+
+  const beginDrag = (clientX: number, clientY: number) => {
+    if (pickedId) return;
+    dragState.current = { startX: clientX, startY: clientY, baseOpen: open, moved: false };
+  };
+
+  const moveDrag = (clientX: number, clientY: number) => {
+    const state = dragState.current;
+    if (!state) return;
+    const dx = state.startX - clientX;
+    const dy = clientY - state.startY;
+    if (!state.moved && Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+    if (!state.moved && Math.abs(dy) > Math.abs(dx) * 1.35) {
+      dragState.current = null;
+      return;
+    }
+    state.moved = true;
+    if (!state.baseOpen) {
+      // Viscous parchment unrolling resistance when pulling left from closed
+      const raw = Math.max(0, dx);
+      const damped = SCROLL_SHEET_WIDTH * (1 - Math.exp(-raw / (SCROLL_SHEET_WIDTH * 0.72)));
+      setDragUnroll(Math.min(SCROLL_SHEET_WIDTH + 10, damped));
+    } else {
+      // Damped roll-back when pushing right from open
+      const rawRight = Math.max(0, -dx);
+      const damped = Math.max(0, SCROLL_SHEET_WIDTH - rawRight * 0.78);
+      setDragUnroll(damped);
+    }
+  };
+
+  const endDrag = () => {
+    const state = dragState.current;
+    dragState.current = null;
+    if (!state) return;
+    if (!state.moved) {
+      navigator.vibrate?.(8);
+      setOpen(prev => !prev);
+      setDragUnroll(null);
+      return;
+    }
+    const finalUnroll = dragUnroll ?? (state.baseOpen ? SCROLL_SHEET_WIDTH : 0);
+    const shouldOpen = state.baseOpen
+      ? finalUnroll > SCROLL_SHEET_WIDTH * 0.68
+      : finalUnroll > SCROLL_SHEET_WIDTH * 0.26;
+    navigator.vibrate?.(6);
+    setOpen(shouldOpen);
+    setDragUnroll(null);
+  };
+
+  const handlePickGroup = (group: GroupChat, button: HTMLButtonElement) => {
+    if (pickedId) return;
+    burstPetals(button, { count: 5 });
+    navigator.vibrate?.(14);
+    setPickedId(group.id);
+    const t1 = window.setTimeout(() => {
+      setOpen(false);
+      setDragUnroll(null);
+    }, 35);
+    const t2 = window.setTimeout(() => {
+      setPickedId(null);
+      onSelectGroup(group);
+    }, 150);
+    timers.current.push(t1, t2);
+  };
+
+  return (
+    <div className="sm:hidden">
+      {/* Tap empty space to dismiss and roll the parchment scroll back in */}
+      {isShowing && currentUnroll > 4 && (
+        <div
+          aria-hidden="true"
+          onClick={() => {
+            if (pickedId) return;
+            navigator.vibrate?.(6);
+            setOpen(false);
+            setDragUnroll(null);
+          }}
+          style={{ opacity: Math.min(1, currentUnroll / SCROLL_SHEET_WIDTH) * 0.32 }}
+          className=" absolute inset-0 z-20 bg-[#2C1F14] dark:bg-[#060812] transition-opacity duration-300"
+        />
+      )}
+
+      {/* Right-edge invisible touch swipe zone so swiping left from anywhere near the right lantern edge pulls the scroll out */}
+      {!open && (
+        <div
+          aria-hidden="true"
+          onTouchStart={e => beginDrag(e.touches[0].clientX, e.touches[0].clientY)}
+          onTouchMove={e => moveDrag(e.touches[0].clientX, e.touches[0].clientY)}
+          onTouchEnd={endDrag}
+          onTouchCancel={endDrag}
+          className="absolute top-[24%] right-0 bottom-[18%] z-20 w-8"
+        />
+      )}
+
+      <aside
+        data-mobile-group-scroll
+        aria-label={t('topbar.group.menu')}
+        onTouchStart={e => beginDrag(e.touches[0].clientX, e.touches[0].clientY)}
+        onTouchMove={e => moveDrag(e.touches[0].clientX, e.touches[0].clientY)}
+        onTouchEnd={endDrag}
+        onTouchCancel={endDrag}
+        style={{
+          transform: `translate3d(${translateX}px, -50%, 0)`,
+          transition: dragUnroll !== null
+            ? 'none'
+            : pickedId
+              ? 'transform 135ms cubic-bezier(0.35, 0, 0.25, 1)'
+              : 'transform 280ms cubic-bezier(0.22, 1.04, 0.36, 1)',
+        }}
+        className="absolute top-[42%] right-0 z-30 flex items-center select-none"
+      >
+        {/* Leading Left Cylindrical Parchment Roller Handle (always peeking out at right edge when rolled up) */}
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-label={t('topbar.group.choose')}
+          title={t('topbar.group.choose')}
+          onPointerDown={e => {
+            if (e.pointerType === 'touch') return;
+            e.currentTarget.setPointerCapture?.(e.pointerId);
+            beginDrag(e.clientX, e.clientY);
+          }}
+          onPointerMove={e => {
+            if (e.pointerType === 'touch' || !dragState.current) return;
+            moveDrag(e.clientX, e.clientY);
+          }}
+          onPointerUp={e => {
+            if (e.pointerType === 'touch') return;
+            endDrag();
+          }}
+          className="relative z-20 -mr-1.5 flex h-28 w-7 shrink-0 flex-col items-center justify-between rounded-l-2xl border-[1.5px] border-[#A88246] dark:border-[#785E38] bg-[linear-gradient(90deg,#DFC28F_0%,#FFF8E8_36%,#F1DEB8_74%,#C29D61_100%)] dark:bg-[linear-gradient(90deg,#231B12_0%,#3D3020_38%,#2A2015_76%,#18120B_100%)] py-1 shadow-[-4px_4px_14px_rgba(70,48,20,0.32),inset_1px_0_0_rgba(255,253,244,0.85)] dark:shadow-[-5px_4px_16px_rgba(0,0,0,0.68)] cursor-grab active:cursor-grabbing"
+        >
+          {/* Top turned-wood scroll finial cap */}
+          <span aria-hidden="true" className="-mt-2.5 h-2.5 w-5 rounded-t-full border border-[#4E3316] bg-[linear-gradient(90deg,#5C3D1C_0%,#9E723D_48%,#472E14_100%)] shadow-xs" />
+          {/* Inner vertical stitch lines */}
+          <span aria-hidden="true" className="pointer-events-none absolute inset-y-2.5 left-1 right-1 rounded-l-xl border-l border-dashed border-[#B99252]/75 dark:border-[#8C6E42]/60" />
+
+          {/* Embroidered Gold-Thread Stitched Chevron Emblem on the Roller (no number badge) */}
+          <span className="relative flex items-center justify-center">
+            <svg
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              className={`h-5 w-5 text-[#9C6E21] drop-shadow-[0_1px_0_rgba(255,252,240,0.85)] transition-transform duration-300 dark:text-[#DFB968] dark:drop-shadow-[0_1px_1px_rgba(0,0,0,0.75)] ${open ? 'rotate-180' : ''}`}
+            >
+              {/* Outer embroidered running-stitch medallion ring */}
+              <circle
+                cx="12"
+                cy="12"
+                r="9.2"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.25"
+                strokeDasharray="2.3 1.9"
+                strokeLinecap="round"
+                opacity="0.72"
+              />
+              {/* Hand-stitched embroidered chevron arrow (<) */}
+              <path
+                d="M14.4 7.2 L9.2 12 L14.4 16.8"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.1"
+                strokeDasharray="2.4 1.55"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              {/* Tiny French-knot stitch dots at top & bottom */}
+              <circle cx="12" cy="4.9" r="0.85" fill="currentColor" opacity="0.75" />
+              <circle cx="12" cy="19.1" r="0.85" fill="currentColor" opacity="0.75" />
+            </svg>
+            {anyGroupWorking && (
+              <svg viewBox="0 0 12 12" aria-hidden="true" className="guild-crown-sparkle pointer-events-none absolute -top-1 -left-0.5 h-2.5 w-2.5 text-[#F4BE37] dark:text-[#FFE48F]">
+                <path d="M6 0.5 C6.45 4 8 5.55 11.5 6 C8 6.45 6.45 8 6 11.5 C5.55 8 4 6.45 0.5 6 C4 5.55 5.55 4 6 0.5 Z" fill="currentColor" />
+              </svg>
+            )}
+          </span>
+
+          {/* Bottom turned-wood scroll finial cap */}
+          <span aria-hidden="true" className="-mb-2.5 h-2.5 w-5 rounded-b-full border border-[#4E3316] bg-[linear-gradient(90deg,#5C3D1C_0%,#9E723D_48%,#472E14_100%)] shadow-xs" />
+        </button>
+
+        {/* Unfurled Parchment Scroll Sheet holding the Group Chat Room List */}
+        <div
+          style={{ width: SCROLL_SHEET_WIDTH }}
+          className="relative overflow-hidden rounded-l-[20px] border-y-[1.5px] border-l-[1.5px] border-[#B69256] dark:border-[#785E38] bg-[linear-gradient(165deg,#FFF9EB_0%,#F6E9CE_52%,#EEDBB8_100%)] dark:bg-[linear-gradient(165deg,#2D2419_0%,#231C13_55%,#1C160F_100%)] py-3 pr-3 pl-4 shadow-[-10px_12px_28px_-8px_rgba(70,48,20,0.38),inset_0_1.5px_0_rgba(255,253,245,0.9)] dark:shadow-[-12px_14px_32px_-6px_rgba(0,0,0,0.78),inset_0_1px_0_rgba(255,230,180,0.12)]"
+        >
+          {/* Inner dashed parchment stitch border */}
+          <span aria-hidden="true" className="pointer-events-none absolute inset-1.5 rounded-l-[14px] border border-r-0 border-dashed border-[#C9A86A]/85 dark:border-[#856A3F]/60" />
+          {/* Right edge rolled-paper shadow depth */}
+          <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 w-2.5 bg-[linear-gradient(90deg,transparent_0%,rgba(140,100,45,0.22)_100%)] dark:bg-[linear-gradient(90deg,transparent_0%,rgba(0,0,0,0.48)_100%)]" />
+
+          <div className="relative mb-2 flex items-center justify-between gap-2 rounded-xl border border-[#DEC492]/90 bg-[#FFFDF6]/82 px-2.5 py-1.5 shadow-[0_2px_0_rgba(140,104,52,0.12)] dark:border-[#5E4B2E] dark:bg-[#19140E]/78">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <svg viewBox="0 0 20 20" aria-hidden="true" className="h-3.5 w-3.5 shrink-0">
+                {[0, 72, 144, 216, 288].map(angle => (
+                  <ellipse key={angle} cx="10" cy="5.3" rx="2.9" ry="4.3" transform={`rotate(${angle} 10 10)`} fill="#E69AA8" />
+                ))}
+                <circle cx="10" cy="10" r="2.1" fill="#FBE79C" />
+              </svg>
+              <span className="truncate font-display text-xs font-extrabold tracking-wide text-[#43321B] dark:text-[#F3E6CA]">
+                {t('topbar.group.label')}
+              </span>
+            </div>
+            <span className="shrink-0 rounded-full border border-[#DEC492]/80 bg-[#F3E4C4]/80 px-2 py-0.5 font-mono text-[10px] font-bold text-[#6B5527] dark:border-[#5C492C] dark:bg-[#33291A]/85 dark:text-[#D6C390]">
+              {groups.length}
+            </span>
+          </div>
+
+          {/* Scrollable Group Chat Room Cards */}
+          <div className="relative max-h-[46dvh] space-y-1.5 overflow-y-auto pr-0.5">
+            {groups.map(group => {
+              const isPicked = pickedId === group.id;
+              const groupWorking = group.members.some(member => Boolean(working[member.roomId]));
+              return (
+                <button
+                  key={group.id}
+                  type="button"
+                  data-scroll-group-id={group.id}
+                  onClick={e => handlePickGroup(group, e.currentTarget)}
+                  className={`relative flex w-full items-center gap-2 rounded-xl border-[1.5px] px-2.5 py-2 text-left transition-all duration-200 cursor-pointer ${
+                    isPicked
+                      ? 'scale-[1.03] border-[#C86D7D] bg-[linear-gradient(165deg,#FFF2F5_0%,#FAD9E1_100%)] text-[#5C2432] ring-2 ring-[#D9828B]/65 shadow-[2px_3px_0_rgba(166,87,114,0.32)] dark:border-[#EFA4B2] dark:bg-[linear-gradient(165deg,#3E2434_0%,#2E1A26_100%)] dark:text-[#FADCE4]'
+                      : 'border-[#DEC9A0] bg-[#FFFDF8]/90 text-[#43321B] shadow-[1.5px_2px_0_rgba(130,96,48,0.16)] hover:border-[#C7A66B] active:scale-[0.98] dark:border-[#54432B] dark:bg-[#171310]/82 dark:text-[#F2E9D8] dark:shadow-[1.5px_2px_0_rgba(0,0,0,0.42)]'
+                  }`}
+                >
+                  <span className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[#E5D2B0] bg-[#FFFBF2] shadow-2xs dark:border-[#4F3F29] dark:bg-[#231C14]">
+                    <GroupCloverIcon group={group} />
+                    {groupWorking && (
+                      <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#D99B26] opacity-75" />
+                        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#E5A93B]" />
+                      </span>
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-display text-[12.5px] font-bold leading-tight">
+                      {group.name}
+                    </span>
+                    <span className="block truncate text-[10px] font-semibold text-[#7A6430] dark:text-[#CDBA88]">
+                      {t('topbar.group.members', { count: group.members.length })}
+                    </span>
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-transform ${
+                      isPicked
+                        ? 'scale-110 border-[#B84A5E] bg-[#C85A6E] text-white shadow-xs'
+                        : 'border-[#DEC492] bg-[#F6E8CC] text-[#7A5B2B] dark:border-[#5C492C] dark:bg-[#2E2417] dark:text-[#D6C390]'
+                    }`}
+                  >
+                    {isPicked ? <Check className="h-3 w-3 stroke-[2.8]" /> : <span className="text-[10px] leading-none">✦</span>}
+                  </span>
+                </button>
+              );
+            })}
+            {groups.length === 0 && (
+              <p className="rounded-xl border border-dashed border-[#D6BE92] bg-[#FFFDF8]/75 px-3 py-3 text-center text-xs font-semibold text-[#7A6430] dark:border-[#54432B] dark:bg-[#171310]/65 dark:text-[#CDBA88]">
+                {t('topbar.group.empty')}
+              </p>
+            )}
+          </div>
+        </div>
+      </aside>
     </div>
   );
 }

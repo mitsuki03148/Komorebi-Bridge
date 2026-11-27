@@ -1,10 +1,30 @@
+// Root Bridge interface for room and group chat, panels and settings.
+// Contents
+// App entry and confirmation provider
+// Room state and gestures
+// Group state, roles and tools
+// Bridge capabilities and panel state
+// Sound, alerts and room lifecycle
+// Room updates, drafts and action feedback
+// Incoming Bridge events
+// Image previews, push and disconnect cleanup
+// Sending, group changes and panel requests
+// Room and group visits
+// Composer, room actions and attention
+// Single-room terminal and controls
+// Phone room navigation
+// Guild shell and top bar
+// Pairing, hall and room views — Choose pairing, the guild hall, a group or a single room.
+// Room actions and archive — Show the room menu, rename form and archive controls.
+// Group dialogs, settings and panels — Mount group tools, settings and room lifecycle dialogs.
+
 import React, { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useT } from './i18n/useLang';
 import { translateServerNotice } from './i18n/serverNotice';
 import { localizeCharacters } from './i18n/characterName';
 import {
-  Settings2, QrCode, Sparkles, X, ChevronDown, MoreHorizontal,
-  Minimize2, AlertTriangle, FlaskConical, Github, Cloud, Inbox as InboxIcon, Archive, TerminalSquare, Users, Copy, Crown, Pencil, ArrowRightLeft, LogOut, Plus, Search, ShieldCheck,
+  Settings2, QrCode, X, ChevronDown, MoreHorizontal,
+  AlertTriangle, FlaskConical, Github, Cloud, Inbox as InboxIcon, Archive, TerminalSquare, Users, Copy, Crown, Pencil, ArrowRightLeft, LogOut, Plus, Search, ShieldCheck,
 } from 'lucide-react';
 import { GUILD_HALL_BANNER, GUILD_HALL_NIGHT_BANNER, INITIAL_CHARACTERS, quotaHint } from './data/initialGuildData';
 import { useTheme } from './utils/theme';
@@ -90,6 +110,9 @@ import { atPromptOnlyBlock, composerBlock, composerHint, copyText, hasResetVouch
 
 type RoomAction = Extract<ClientEvent, { type: 'INPUT' | 'APPROVAL' }>;
 type ActionFeedback = { type: RoomAction['type']; state: 'pending' | 'success' | 'error'; message: string };
+
+// App entry and confirmation provider
+// Give the guild interface a shared confirmation dialog.
 export default function App() {
   return (
     <ConfirmProvider>
@@ -99,6 +122,8 @@ export default function App() {
 }
 
 function GuildApp() {
+  // Room state and gestures
+  // Track the room inventory and read marks alongside context-menu gestures.
   const { t, lang } = useT();
   const { isDark } = useTheme();
   const confirm = useConfirm();
@@ -206,6 +231,9 @@ function GuildApp() {
       }
     },
   };
+
+  // Group state, roles and tools
+  // Keep the active room and group selection alongside their role, board and trigger controls.
   const [selectedRoomId, setSelectedRoomId] = useState('');
   const [mobileRole, setMobileRole] = useState<CLIModelId | null>(null);
   const [groups, setGroups] = useState<GroupChat[]>([]);
@@ -326,6 +354,9 @@ function GuildApp() {
     document.addEventListener('keydown', key);
     return () => { document.removeEventListener('pointerdown', pointer); document.removeEventListener('keydown', key); };
   }, [groupDropdownOpen]);
+
+  // Bridge capabilities and panel state
+  // Store connection capabilities before exposing the file, worktree, push and composer controls.
   const [tailscaleUrl, setTailscaleUrl] = useState<string | null>(null);
   const [workspaceRoot, setWorkspaceRoot] = useState('');
   /** Where a new room starts (Settings); an older Bridge does not send it. */
@@ -363,6 +394,7 @@ function GuildApp() {
   const [ghTarget, setGhTarget] = useState<GhTarget>();
   const openGitHubTarget = (target: GhTarget) => { setGhTarget(target); setGhOpen(true); };
   const [roomPresenceSupported, setRoomPresenceSupported] = useState(false);
+  const [roomDraftsSupported, setRoomDraftsSupported] = useState(false);
   const [roomViewStartSupported, setRoomViewStartSupported] = useState(false);
   const [attachmentSupported, setAttachmentSupported] = useState(false);
   const [fileUploadSupported, setFileUploadSupported] = useState(false);
@@ -392,6 +424,9 @@ function GuildApp() {
   const pendingActions = useRef(new Map<string, {
     id: string; type: RoomAction['type']; timer: ReturnType<typeof setTimeout>; accepted?: () => void;
   }>());
+
+  // Sound, alerts and room lifecycle
+  // Unlock audio on user input and track the visible alerts and room lifecycle dialogs.
   const [soundEnabled, setSoundEnabledState] = useState(() => readPreference('komorebi-sound', true));
   const setSoundEnabled = (value: boolean) => { unlockGuildAudio(value); setSoundEnabledState(value); writePreference('komorebi-sound', value); };
   useEffect(() => {
@@ -412,6 +447,8 @@ function GuildApp() {
   const moveRoomTarget = allRooms.find(room => room.id === moveRoomTargetId);
   const [restoreRoomId, setRestoreRoomId] = useState<string | null>(null);
 
+  // Room updates, drafts and action feedback
+  // Keep what the composer and room list show in step with Bridge replies.
   /** A toast with a roomId can be tapped to open that room. */
   const showToast = (message: string, duration = 4_000, roomId?: string) => {
     const id = ++toastSeq.current;
@@ -446,6 +483,8 @@ function GuildApp() {
     }
   };
 
+  // Incoming Bridge events
+  // Handle snapshots, updates and request replies in one socket callback.
   const bridge = useBridge(event => {
     if (event.type === 'SNAPSHOT') {
       setPendingSince(pendingAges.current.reset(event.rooms));
@@ -481,6 +520,7 @@ function GuildApp() {
       setAutoCompactAll(typeof event.autoCompactAll === 'boolean' ? event.autoCompactAll : undefined);
       setTranscribeSupported(event.transcribeSupported === true);
       setRoomPresenceSupported(event.roomPresenceSupported === true);
+      setRoomDraftsSupported(event.roomDraftsSupported === true);
       setRoomViewStartSupported(event.roomViewStartSupported === true);
       setAttachmentSupported(event.attachmentSupported === true);
       setFileUploadSupported(event.fileUploadSupported === true);
@@ -677,6 +717,8 @@ function GuildApp() {
       showToast(displayMessage, event.type === 'ERROR' ? 7_000 : 4_000);
     }
   });
+  // Image previews, push and disconnect cleanup
+  // Route notification taps to rooms or the Inbox and clear pending UI state on disconnect.
   const imagePreviews = useImagePreviews(imagePreviewSupported, event => bridge.send(event));
   const pushControl = usePushNotifications(pushPublicKey, bridge.send, bridge.state === 'connected');
   useEffect(() => {
@@ -700,6 +742,8 @@ function GuildApp() {
     }
   }, [bridge.state]);
 
+  // Sending, group changes and panel requests
+  // Send commands and panel requests over the active connection.
   const send = (event: ClientEvent) => {
     if (bridge.state === 'connected' && bridge.send(event)) return true;
     showToast(t('connection.unavailable'));
@@ -802,6 +846,8 @@ function GuildApp() {
     });
     if (ok && send({ type: 'DELETE_ARCHIVED', roomIds: ids })) setSelectedArchived([]);
   };
+  // Room and group visits
+  // Keep history, the selected recipient and draft presence tied to the active view.
   const selectedRoom = rooms.find(room => room.id === selectedRoomId);
   // Older messages are asked for one room at a time; an older Bridge cannot, so no loader is offered.
   const loadHistory = historyPagingSupported ? (roomIds: string[]) => { for (const roomId of roomIds) bridge.send({ type: 'HISTORY_MORE', roomId }); } : undefined;
@@ -869,6 +915,15 @@ function GuildApp() {
       bridge.send({ type: 'VIEW_ROOM', roomId: selectedRoom?.id ?? null });
     }
   }, [bridge.state, bridge.send, roomPresenceSupported, selectedRoom?.id, selectedGroup?.id]);
+  const draftRoomsKey = JSON.stringify(rooms.filter(room => drafts[room.id]?.trim() || attachments[room.id]?.length).map(room => room.id).sort());
+  useEffect(() => {
+    if (bridge.state === 'connected' && roomDraftsSupported) {
+      bridge.send({ type: 'DRAFT_ROOMS', roomIds: JSON.parse(draftRoomsKey) });
+    }
+  }, [bridge.state, bridge.send, roomDraftsSupported, draftRoomsKey]);
+
+  // Composer, room actions and attention
+  // Share input and approval handling between room views and route attention to the right room.
   const selectedCharacter = characters[selectedRoom?.modelId ?? mobileRole ?? 'AGY'];
   const mobileInput = selectedRoom ? drafts[selectedRoom.id] ?? '' : '';
   const mobileComposerRef = useAutosize(mobileInput);
@@ -959,7 +1014,7 @@ function GuildApp() {
     // The answer names the question the person was looking at, so a late answer never lands on the next one.
     return send({ type: 'ANSWER_QUESTION', roomId, questionId: target.pendingQuestion!.id, ...detail });
   };
-  const handleSendPrompt = (roomId: string, text: string, _fromMobile?: boolean, accepted?: () => void, groupId?: string) => {
+  const handleSendPrompt = (roomId: string, text: string, accepted?: () => void, groupId?: string) => {
     const room = allRooms.find(room => room.id === roomId);
     const busy = room && atPromptOnlyBlock(room, text);
     if (busy) { showToast(busy); return; }
@@ -977,7 +1032,7 @@ function GuildApp() {
   const sendWithAttachment = async (roomId: string, text: string, accepted: () => void, groupId?: string) => {
     const files = attachments[roomId];
     if (!files?.length) {
-      handleSendPrompt(roomId, text, undefined, accepted, groupId);
+      handleSendPrompt(roomId, text, accepted, groupId);
       return;
     }
     if (!requireFileUploadSupport(files, fileUploadSupported)) { showToast(t('attachment.files.bridge')); return; }
@@ -1049,9 +1104,9 @@ function GuildApp() {
           selectedRoomId={groupRecipient} compact={streetMobileView} working={working} flows={benchFlows} showMemberRoles={groupMemberRolesSupported} protectedKeys={protectedKeys}
           onSelectGroup={selectGroup} onSelectRoom={wakeGroupMember} /></div></div>
   );
-  const handleRunCompact = (roomId: string, _fromMobile?: boolean) => handleSendPrompt(roomId, '/compact');
+  const handleRunCompact = (roomId: string) => handleSendPrompt(roomId, '/compact');
   const viewedIds = selectedGroup ? selectedGroup.members.map(member => member.roomId) : selectedRoom ? [selectedRoom.id] : [];
-  // A group keeps every member open, but only the addressed member's approval and question cards are on screen: the others must still call out.
+  // A group follows every member's conversation. Only the addressed member has inline approval and question cards, so the other rooms use alerts.
   const cardIds = selectedGroup ? (groupRecipient ? [groupRecipient] : []) : selectedRoom ? [selectedRoom.id] : [];
   const attention = useRoomAttention(rooms, viewedIds, ({ room, kind }) => {
     const name = `${characters[room.modelId].characterName} · ${room.roomName}`;
@@ -1119,6 +1174,8 @@ function GuildApp() {
     return () => document.removeEventListener('keydown', key);
   });
 
+  // Single-room terminal and controls
+  // Wire the selected room's terminal and CLI controls for both phone and desktop.
   const liveTerminal = selectedRoom && (selectedRoom.menu || terminalRoomId === selectedRoom.id) && (
     <LiveTerminal room={selectedRoom} compact={streetMobileView} forceOpen={terminalRoomId === selectedRoom.id}
       onManualKey={terminalKeySupported ? key => send({ type: 'TERMINAL_KEY', roomId: selectedRoom.id, screen: selectedRoom.screen ?? '', screenId: selectedRoom.screenId, key }) : undefined}
@@ -1137,6 +1194,8 @@ function GuildApp() {
     />
   );
 
+  // Phone room navigation
+  // Reuse the character strip and room search in the hall and conversation views.
   const roleTouch = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const roleTouchStart = useRef<{ x: number; y: number } | null>(null);
   const roleLongPressed = useRef(false);
@@ -1168,9 +1227,9 @@ function GuildApp() {
   const mobileRoomSearch = roomQuery.trim().toLowerCase();
   const filteredMobileRooms = mobileRooms.filter(room => room.roomName.toLowerCase().includes(mobileRoomSearch));
   const activeMobileRoom = selectedRoom && selectedRoom.modelId === mobileRole ? selectedRoom : undefined;
-  const mobileNavigation = (<div className="relative z-30 shrink-0 rounded-b-[24px] border-b border-[#E6DCD0]/75 bg-[#FBF8F3]/74 pb-1 backdrop-blur-md shadow-[0_10px_28px_-14px_rgba(90,70,50,0.22)] dark:border-[#2E3654]/80 dark:bg-[#151B2E]/84 dark:shadow-[0_12px_30px_-12px_rgba(0,0,0,0.65)]">
+  const mobileNavigation = (<div className="pointer-events-none absolute top-0 inset-x-0 z-30 bg-gradient-to-b from-[#FBF8F3]/34 via-[#FBF8F3]/12 to-transparent pb-3 dark:from-[#0C1020]/45 dark:via-[#0C1020]/15 dark:to-transparent">
             {/* 3 Character Quick Switcher Strip (Floating Guild Charm Cards) */}
-            <div className="px-3 pt-1.5 pb-1.5 grid grid-cols-3 gap-2 shrink-0 [&_.guild-selection]:bg-white/60 dark:[&_.guild-selection]:bg-[#1C233B]/70 [&_.guild-selection[aria-pressed=true]]:bg-[color-mix(in_srgb,var(--selection-surface)_70%,transparent)]">
+            <div className="pointer-events-auto px-3 pt-1.5 pb-1.5 grid grid-cols-3 gap-2 shrink-0 [&_.guild-selection]:bg-white/60 dark:[&_.guild-selection]:bg-[#1C233B]/70 [&_.guild-selection[aria-pressed=true]]:bg-[color-mix(in_srgb,var(--selection-surface)_70%,transparent)]">
               {(['AGY', 'CODEX', 'CLAUDE'] as CLIModelId[]).map((m) => {
                 const c = characters[m];
                 const mRooms = rooms.filter((r) => r.modelId === m);
@@ -1219,7 +1278,7 @@ function GuildApp() {
             </div>
 
             {/* Room Bubbles Horizontal Pill Bar (shown once a character is picked) — A1 Room Sheet + B2 Room Controls */}
-            {mobileRole && <div {...roomActions} style={{ WebkitTouchCallout: 'none' }} className="relative z-30 px-3 py-1 flex items-center gap-1.5 shrink-0 [&_.guild-selection]:bg-white/65 dark:[&_.guild-selection]:bg-[#1C233B]/75 [&_.guild-selection[aria-current=true]]:bg-[color-mix(in_srgb,var(--selection-surface)_70%,transparent)]">
+            {mobileRole && <div {...roomActions} style={{ WebkitTouchCallout: 'none' }} className="pointer-events-auto relative z-30 px-3 py-1 flex items-center gap-1.5 shrink-0 [&_.guild-selection]:bg-white/65 dark:[&_.guild-selection]:bg-[#1C233B]/75 [&_.guild-selection[aria-current=true]]:bg-[color-mix(in_srgb,var(--selection-surface)_70%,transparent)]">
               <button type="button" data-room-add aria-label={t('room.create.for', { name: characters[mobileRole].characterName })} title={t('room.create.for', { name: characters[mobileRole].characterName })} onClick={() => openRoleRoom(mobileRole)}
                 className="guild-liquid-glass flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[#E2D6C5]/85 dark:border-[#3A456A]/85 text-[#8C6D58] dark:text-[#C5CDE3] transition-colors hover:border-[#D9A7B8] hover:text-[#8E435F] dark:hover:border-[#6B4A6E] dark:hover:text-[#F4C4D4] active:scale-95"><Plus size={14} aria-hidden="true" /></button>
 
@@ -1231,7 +1290,7 @@ function GuildApp() {
                   aria-expanded={mobileRoomMenuOpen}
                   aria-current={activeMobileRoom ? 'true' : undefined}
                   onClick={() => setMobileRoomMenuOpen(open => !open)}
-                  className="guild-selection flex min-h-7 w-full min-w-0 items-center gap-1.5 rounded-full border border-[#E2D6C5]/85 dark:border-[#3A456A]/85 px-2.5 py-1 text-left text-[11.5px] font-semibold text-[#5A4B40] dark:text-[#ECE7DF] backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] cursor-pointer"
+                  className="guild-selection flex min-h-7 w-full min-w-0 items-center gap-1.5 rounded-full border border-[#E2D6C5]/85 dark:border-[#3A456A]/85 px-2.5 py-1 text-left text-[11.5px] font-semibold text-[#5A4B40] dark:text-[#ECE7DF] backdrop-blur-md shadow-[0_0_14px_-4px_color-mix(in_srgb,var(--selection-edge)_48%,transparent),inset_0_1px_0_rgba(255,255,255,0.65)] dark:shadow-[0_0_16px_-3px_color-mix(in_srgb,var(--selection-edge)_55%,transparent),inset_0_1px_0_rgba(255,255,255,0.12)] cursor-pointer"
                 >
                   {activeMobileRoom && working[activeMobileRoom.id] && <WorkingSpark stalled={working[activeMobileRoom.id] === 'stalled'} background={Boolean(activeMobileRoom.backgroundTasks)} />}
                   <span className="min-w-0 flex-1 truncate">
@@ -1298,6 +1357,8 @@ function GuildApp() {
 
   </div>);
 
+  // Guild shell and top bar
+  // Share file, GitHub and image opening across the guild and keep alerts above the active view.
   return (
     <ImagePreviewProvider value={imagePreviews}>
     <FileOpenContext.Provider value={openFile}>
@@ -1319,7 +1380,7 @@ function GuildApp() {
         onCloseToast={id => setToasts(current => current.filter(item => item.id !== id))} />
 
       {/* Minimalist Komorebi Top Bar: "木漏れ日" on Left, Floating Glass Icon Capsule on Right */}
-      <header className="relative z-40 sticky top-0 flex items-center justify-between gap-1.5 px-3 sm:gap-4 sm:px-5 py-1.5 bg-[#FBF8F3]/74 sm:bg-gradient-to-b sm:from-[#FBF8F3]/85 sm:via-[#FBF8F3]/60 sm:to-[#FBF8F3]/45 dark:bg-[#151B2E]/84 sm:dark:from-[#121624]/90 sm:dark:via-[#121624]/65 sm:dark:to-[#121624]/45 sm:border-b sm:border-[#E6DCD0]/60 sm:dark:border-[#2C3450]/70 backdrop-blur-md shrink-0 select-none" style={{ position: 'sticky', top: 0 }}>
+      <header className="relative z-40 sticky top-0 flex items-center justify-between gap-1.5 px-3 sm:gap-4 sm:px-5 py-1.5 bg-gradient-to-b from-[#FBF8F3]/42 to-transparent sm:from-[#FBF8F3]/85 sm:via-[#FBF8F3]/60 sm:to-[#FBF8F3]/45 dark:from-[#0C1020]/52 dark:to-transparent sm:dark:from-[#121624]/90 sm:dark:via-[#121624]/65 sm:dark:to-[#121624]/45 sm:border-b sm:border-[#E6DCD0]/60 sm:dark:border-[#2C3450]/70 sm:backdrop-blur-md shrink-0 select-none" style={{ position: 'sticky', top: 0 }}>
         <button type="button" onClick={() => { setSelectedGroupId(null); setSelectedRoomId(''); setMobileRole(null); }}
           className="flex min-w-0 shrink items-center gap-1.5 whitespace-nowrap rounded-full py-0.5 pr-1 transition-transform active:scale-[0.97] cursor-pointer focus-visible:outline-2 focus-visible:outline-[#965069] sm:shrink-0 sm:gap-2 sm:pr-1.5">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#E2D6C5]/80 bg-[#FFFDF9]/85 p-0.5 shadow-2xs dark:border-[#6C7BA8]/35 dark:bg-[#1D243C]/85" aria-hidden="true">
@@ -1480,7 +1541,7 @@ function GuildApp() {
         </div>
       </header>
 
-      {/* Main Content Area */}
+      {/* Main Content Area — Choose pairing, the guild hall, a group or a single room. */}
       {bridge.everConnected && bridge.state === 'connecting' && (
         <div role="status" className="relative z-30 shrink-0 bg-[#FCEFD9] dark:bg-[#2F261A] px-4 py-1.5 text-center text-xs font-semibold text-[#7A542E] dark:text-[#F0C882]">
           {t('connection.reconnecting')}
@@ -1529,7 +1590,6 @@ function GuildApp() {
             onResume={item => { if (item.offlineToken) send({ type: 'FILE_TRIGGERS_RESUME', groupId: selectedGroup.id, id: item.id, offlineToken: item.offlineToken }); }} />}
           worktreeCall={worktreeSupported ? worktreeRef.current?.call : undefined}
           orchestratorRoomId={selectedGroup.orchestratorRoomId}
-          onSetOrchestrator={roomId => send({ type: 'GROUP_SET_ORCHESTRATOR', groupId: selectedGroup.id, roomId })}
           onEditMemberRole={groupMemberRolesSupported ? roomId => editMemberRole(selectedGroup.id, roomId) : undefined}
           memberStrip={streetMobileView ? ({ onAdd }) => renderGroupSidebar(onAdd) : undefined}
           recipientId={groupRecipient}
@@ -1543,7 +1603,7 @@ function GuildApp() {
           onDraft={changeDraft}
           onBack={() => { setSelectedGroupId(null); if (streetMobileView) { setSelectedRoomId(''); setMobileRole(null); } }}
           onSend={(roomId, text, accepted) => { void sendWithAttachment(roomId, text, accepted, selectedGroup.id); }}
-          onCommand={(roomId, text, accepted) => handleSendPrompt(roomId, text, undefined, accepted, selectedGroup.id)}
+          onCommand={(roomId, text, accepted) => handleSendPrompt(roomId, text, accepted, selectedGroup.id)}
           onDecision={handleDecision}
           onInterrupt={interrupt}
           onMenu={(roomId, menuId, key) => send({ type: 'MENU', roomId, menuId, key })}
@@ -1567,7 +1627,6 @@ function GuildApp() {
           onSelectRecipient={setGroupRecipientId}
           onAddMember={modelId => send({ type: 'GROUP_ADD', groupId: selectedGroup.id, modelId })}
           onAddExisting={roomId => send({ type: 'GROUP_ADD_EXISTING', groupId: selectedGroup.id, roomId })}
-          onRemoveMember={roomId => { void removeFromGroup(selectedGroup, roomId); }}
           attachmentPicker={roomId => attachmentControl('button', roomId)}
           voiceButton={roomId => voiceControl(roomId)}
           attachmentPreview={roomId => attachmentControl('preview', roomId)}
@@ -1585,14 +1644,14 @@ function GuildApp() {
             <div className="w-full sm:w-[390px] h-full sm:max-h-[792px] min-h-0 sm:rounded-[38px] sm:border-[5px] border-[#DFD3C3] bg-transparent sm:shadow-2xl flex flex-col overflow-hidden relative">
               {mobileNavigation}
               {mobileRole ? (
-                <div key={mobileRole} className="guild-pane-in relative flex-1 min-h-0 flex flex-col">
+                <div key={mobileRole} className="guild-pane-in relative flex-1 min-h-0 flex flex-col pt-[104px]">
                   <EmptyRoomState modelId={mobileRole} character={characters[mobileRole]}
                     working={rooms.some(room => room.modelId === mobileRole && Boolean(working[room.id]))}
                     rooms={rooms} pinnedKeys={pinnedKeys} onSelectRoom={selectRoom} workingRooms={working} />
                   <MobileGroupScrollDrawer groups={groups} working={working} onSelectGroup={selectGroup} />
                 </div>
               ) : (
-                <main className="guild-pane-in flex-1 min-h-0 flex flex-col" aria-label={t('guild.hall.label')}>
+                <main className="guild-pane-in flex-1 min-h-0 flex flex-col pt-[64px]" aria-label={t('guild.hall.label')}>
                   <GuildHallHome characters={characters} rooms={rooms} working={working} groups={groups} onSelectGroup={selectGroup} />
                 </main>
               )}
@@ -1613,7 +1672,7 @@ function GuildApp() {
         )
       ) : !streetMobileView ? (
         <>
-          {/* Upper 81% Space: 30% Left 3-Character Menu + 70% Right Unobstructed Komorebi Terminal */}
+          {/* The desktop sidebar keeps its width while the room fills the available space. */}
           <div className="relative z-10 flex-1 flex overflow-hidden min-h-0">
             <div {...roomActions} style={{ WebkitTouchCallout: 'none' }} className="contents">
             <LeftCharacterMenu
@@ -1674,14 +1733,19 @@ function GuildApp() {
 
         </>
       ) : (
-        /* iPhone 17 (6.3" 19.5:9 Aspect Ratio) Optimized Street Mobile Mode */
+        /* Use the full width on a phone and a fixed-width preview on wider screens. */
         <div className="relative z-10 flex-1 min-h-0 overflow-hidden p-0 sm:p-2 flex items-center justify-center">
           <div className="w-full sm:w-[390px] h-full sm:max-h-[792px] min-h-0 sm:rounded-[38px] sm:border-[5px] border-[#DFD3C3] bg-transparent sm:shadow-2xl flex flex-col overflow-hidden relative">
             {mobileNavigation}
             {worktreeSupported && worktreeRef.current && selectedRoom.repoPath && <WorktreeLayer roomId={selectedRoom.id} call={worktreeRef.current.call} />}
 
-            {/* Active Character Live Sprite + Scrollable Room Stream on iPhone 17 (min-h-0 keeps Composer pinned!) */}
-            <div ref={mobileScroll.ref} onScroll={mobileScroll.onScroll} className="flex-1 min-h-0 overflow-y-auto px-3 py-2.5 space-y-2 relative">
+            {/* The room stream scrolls under the floating navigation with a soft fade at the top. */}
+            <div ref={mobileScroll.ref} onScroll={mobileScroll.onScroll}
+              style={{
+                WebkitMaskImage: 'linear-gradient(to bottom, transparent 0px, transparent 52px, black 110px, black 100%)',
+                maskImage: 'linear-gradient(to bottom, transparent 0px, transparent 52px, black 110px, black 100%)',
+              }}
+              className="flex-1 min-h-0 overflow-y-auto px-3 pt-[110px] pb-3 space-y-2 relative">
               <div key={selectedRoom.id} className="guild-pane-in space-y-1.5">
                 <HistoryNote truncated={selectedRoom.historyTruncated} count={selectedRoom.logs.length} onLoadMore={loadHistory && (() => loadHistory([selectedRoom.id]))} />
                 {bubbleRuns(selectedRoom.logs.filter(entry => !isBenchDelivery(entry)).map(entry => ({ entry: benchWakeAsLine(entry), key: selectedRoom.id }))).map(item => (
@@ -1702,7 +1766,7 @@ function GuildApp() {
             )}
 
             <div className="shrink-0 px-3">
-              {selectedRoom.pendingQuestion && <div className="mb-2"><QuestionCard pending={selectedRoom.pendingQuestion} name={selectedCharacter.characterName} disabled={actionPending} onAnswer={(text, detail) => { if (!answerQuestionDirectly(selectedRoom.id, detail)) handleSendPrompt(selectedRoom.id, text, true); }} /></div>}
+              {selectedRoom.pendingQuestion && <div className="mb-2"><QuestionCard pending={selectedRoom.pendingQuestion} name={selectedCharacter.characterName} disabled={actionPending} onAnswer={(text, detail) => { if (!answerQuestionDirectly(selectedRoom.id, detail)) handleSendPrompt(selectedRoom.id, text); }} /></div>}
               {selectedRoom.pendingApproval && (
                 <div className="guild-approval p-2.5 space-y-2 max-h-[30dvh] overflow-y-auto">
                   <div className="flex items-center gap-2 text-xs font-bold text-[#754B29]">
@@ -1748,11 +1812,11 @@ function GuildApp() {
 
             </div>
 
-            {/* Pinned Full-Width Frosted Bottom Dock (Composer + Integrated Control Strip, no double stacked bubbles) */}
-            <div className="shrink-0 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] rounded-t-[24px] bg-[#FBF8F3]/82 dark:bg-[#151B2E]/88 backdrop-blur-xl border-t border-[#E6DCD0]/80 dark:border-[#343D5E]/80 shadow-[0_-10px_28px_-14px_rgba(90,70,50,0.18)] dark:shadow-[0_-12px_30px_-12px_rgba(0,0,0,0.6)] space-y-1.5 relative">
+            {/* Pinned Floating Bottom Area (Composer + Glowing HP/MP Control Strip floating directly over background) */}
+            <div className="shrink-0 px-3 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-[#FBF8F3]/45 via-[#FBF8F3]/14 to-transparent dark:from-[#0B0F1D]/58 dark:via-[#0B0F1D]/18 dark:to-transparent space-y-1.5 relative">
               {mobileScroll.visible && <ScrollToLatestButton onClick={mobileScroll.goToBottom} newMessages={mobileScroll.newMessages} />}
               {!actionPending && !mobileBlocked && <SlashCommandMenu modelId={selectedRoom.modelId} draft={mobileInput} onSelect={item => {
-                if (item.immediateExecute) handleSendPrompt(selectedRoom.id, item.cmd, true, () => {
+                if (item.immediateExecute) handleSendPrompt(selectedRoom.id, item.cmd, () => {
                   changeDraft(selectedRoom.id, current => current === mobileInput ? '' : current);
                 });
                 else changeDraft(selectedRoom.id, item.cmd + ' ');
@@ -1797,7 +1861,7 @@ function GuildApp() {
               {(feedbackMessage || mobileHint) && <p role="status" className={`w-fit max-w-full rounded-full bg-white/55 dark:bg-[#1D243B]/80 px-3 py-1 text-[11px] shadow-[inset_0_0_0_1px_rgba(232,220,210,0.7)] dark:shadow-[inset_0_0_0_1px_rgba(54,64,98,0.7)] ${roomFeedback?.state === 'error' ? 'text-[#8D3F48] dark:text-[#F09AA6]' : feedbackMessage ? 'text-[#3F694A] dark:text-[#96C7A3]' : 'text-[#8C7A6E] dark:text-[#A4AECC]'}`}>{feedbackMessage ?? mobileHint}</p>}
 
               <ControlBar room={selectedRoom} character={selectedCharacter} mobile hideRoomControls onCommand={handleSendPrompt} settingsDisabled={!mobileCapabilities?.settings}
-                compact={{ disabled: !mobileCapabilities?.compact, title: mobileCapabilities?.reason ? `/compact · ${mobileCapabilities.reason}` : '/compact', onRun: () => handleRunCompact(selectedRoom.id, true) }}
+                compact={{ disabled: !mobileCapabilities?.compact, title: mobileCapabilities?.reason ? `/compact · ${mobileCapabilities.reason}` : '/compact', onRun: () => handleRunCompact(selectedRoom.id) }}
                 terminal={{ open: terminalRoomId === selectedRoom.id, onToggle: () => setTerminalRoomId(current => current === selectedRoom.id ? null : selectedRoom.id) }}
                 shield={{ disabled: !selectedRoom.live || actionPending, autoMode: launchModes ? roomAutoMode(selectedRoom, launchModes) : undefined,
                   onMode: launchModes ? auto => send({ type: 'SET_ROOM_MODE', roomId: selectedRoom.id, auto }) : undefined,
@@ -1810,6 +1874,7 @@ function GuildApp() {
         </div>
       )}
 
+      {/* Room actions and archive — Show the room menu, rename form and archive controls. */}
       {menuRoom && (() => {
         const accent = roleAccent[menuRoom.modelId];
         const char = characters[menuRoom.modelId];
@@ -2083,7 +2148,7 @@ function GuildApp() {
         </div>
       )}
 
-      {/* Modals */}
+      {/* Group dialogs, settings and panels — Mount group tools, settings and room lifecycle dialogs. */}
       {groupMenuId && groupMenu && <div className="guild-backdrop-in fixed inset-0 z-[90] flex items-end justify-center bg-black/30 dark:bg-[#090C16]/68 p-4 sm:items-center" onClick={event => { if (event.target === event.currentTarget) setGroupMenuId(null); }}>
         <div ref={focusScope} role="dialog" aria-modal="true" aria-label={t('group.menu.label')} className="guild-sheet-in max-h-[85dvh] w-full max-w-sm space-y-3 overflow-y-auto rounded-3xl bg-[#FBF8F3] dark:bg-[#171D31] border border-transparent dark:border-[#313958] text-[#4A3E36] dark:text-[#ECE7DF] p-5 shadow-xl">
           <h2 className="font-bold">{groupMenu.name}</h2>

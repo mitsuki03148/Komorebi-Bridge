@@ -45,13 +45,13 @@ test('the group header shows who it is talking to as a chip in that role\'s colo
   assert.ok(html.includes(`background-color:${roleAccent.CLAUDE.wash}E0`))
   assert.match(html, /guild-flower-spin/, 'flower spins gently while it works')
   assert.doesNotMatch(render(false).replace(/<svg[\s\S]*?<\/svg>/g, ''), /guild-flower-spin/)
-  assert.match(html, /<header[^>]*border-\[#E6DCD0\]\/60 bg-\[#FBF8F3\]\/62 backdrop-blur-md/, 'the group header is frosted glass: the picture and the bubbles show softly through it (on purpose)')
+  assert.match(html, /<header[^>]*bg-transparent/, 'the group header floats directly over the single background picture with no opaque bar')
 })
 
 test('the top bar, role cards, room tabs and the group sidebar let the picture through, and active cards take their role colour', async () => {
   const source = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
-  // Spec change (瞳's A1+B2 frosted canopy & bottom dock redesign): seamless frosted top canopy on phone, soft gradient header on Mac.
-  assert.match(source, /<header className="relative z-40[^"]*bg-\[#FBF8F3\]\/74/)
+  // Spec change (瞳's floating glass redesign): airy transparent gradient header on phone & Mac, letting the single background shine through.
+  assert.match(source, /<header className="relative z-40[^"]*bg-gradient-to-b from-\[#FBF8F3\]\/42/)
   assert.match(source, /px-3 pt-1\.5 pb-1\.5 grid grid-cols-3/)
   assert.match(source, /px-3 py-1 flex items-center gap-1\.5 shrink-0/)
   assert.match(source, /\[&_aside\]:bg-white\/35/)

@@ -63,7 +63,7 @@ export function translateServerNotice(message: string, translateFn: TranslateFn 
   m = /^預設工作資料夾已改為 (.+?)。新房由此開始，舊房不變。$/.exec(message);
   if (m) return translateFn('notice.folder.changed', { path: m[1] });
 
-  m = /^(\d+) 張超過 (\d+) 日的上傳圖片已移到垃圾桶。$/.exec(message);
+  m = /^(\d+) [張個]超過 (\d+) 日的上傳(?:圖片|附件)已移到垃圾桶。$/.exec(message);
   if (m) return translateFn('notice.attachment.expired', { count: Number(m[1]), days: Number(m[2]) });
 
   m = /^已經載入到上限（(\d+) 則）。更早的對話請在 CLI 以原生 \/resume 查看。$/.exec(message);

@@ -1,10 +1,19 @@
-import { useEffect, useState } from 'react';
+// Contents
+// Shared dialog and switches — Give the dialogs consistent controls.
+// Appearance and languages — Choose the theme, display language and voice input language.
+// Notifications — Set up lock-screen alerts.
+// Room defaults and compaction — Choose how rooms start and manage their context.
+// Restart the Bridge — Explain the interruption before restarting.
+// Settings dialog — Bring all the settings together in one place.
+// Phone connection — Open the Bridge from another device.
+
+import { useState } from 'react';
 import { StoragePanel } from './StorageUsage';
 import type { StorageUsage } from '../../bridge/storage-usage';
-import { Bell, ChevronUp, Clock, RotateCw, Folder, Languages, FolderOpen, Mic, Minimize2, MonitorSmartphone, MoonStar, ShieldCheck, QrCode, Settings2, Smartphone, Sparkles, Sun, SunMoon, Volume2, X } from 'lucide-react';
+import { Bell, Clock, RotateCw, Languages, Mic, Minimize2, MonitorSmartphone, MoonStar, ShieldCheck, QrCode, Settings2, Smartphone, Sparkles, Sun, SunMoon, Volume2, X } from 'lucide-react';
 import type { CharacterProfile, CLIModelId, TerminalRoom } from '../types/guild';
 import { QrCodeMatrix } from './QrCodeMatrix';
-import { useEscape } from '../utils/roomUi';
+import { useCopyFeedback, useEscape } from '../utils/roomUi';
 import { focusScope } from '../utils/focusScope';
 import type { PushControl } from '../utils/usePush';
 import type { LaunchModes } from '../types/bridge';
@@ -15,6 +24,9 @@ import type { ConfirmOptions } from './ConfirmDialog';
 import { translateServerNotice } from '../i18n/serverNotice';
 import { themeModes, useTheme, type ThemeMode } from '../utils/theme';
 import { readVoiceLanguage, voiceLanguages, writeVoiceLanguage, type VoiceLanguage } from '../utils/voice';
+
+// ── Shared dialog and switches ───────────────────────────────────────
+// Use these controls when a dialog needs the same frame, focus behavior or on/off switch.
 
 function Shell({ title, icon, onClose, children, headerAction, wide = false }: {
   title: string; icon: React.ReactNode; onClose: () => void; children: React.ReactNode; headerAction?: React.ReactNode; wide?: boolean;
@@ -58,6 +70,9 @@ function Toggle({ icon, title, detail, on, onChange, disabled }: {
     </div>
   );
 }
+
+// ── Appearance and languages ─────────────────────────────────────────
+// Use these panels when changing how the app looks, what language it displays or how it listens.
 
 const themeIcons: Record<ThemeMode, React.ComponentType<{ className?: string }>> = {
   auto: Clock,
@@ -106,28 +121,6 @@ export function ThemePanel() {
   );
 }
 
-/** Lock-screen notifications for rooms that need an approval or have finished. */
-export function PushPanel({ push }: { push: PushControl }) {
-  const { t } = useT();
-  const reason = !push.bridgeReady ? t('settings.push.bridge') : push.support.ok ? undefined : t(({ insecure: 'settings.push.insecure', 'not-installed': 'settings.push.notinstalled', unsupported: 'settings.push.unsupported', denied: 'settings.push.denied' } as const)[push.support.reason]);
-  return (
-    <div className="space-y-2">
-      <Toggle icon={<Bell className="h-4 w-4" />} title={t('settings.push.title')}
-        detail={t('settings.push.detail')}
-        on={push.enabled} disabled={Boolean(reason) || push.busy} onChange={on => void (on ? push.enable() : push.disable())} />
-      {reason && <p role="status" className="px-1 text-[#8D3F48] dark:text-[#F09AA6]">{reason}</p>}
-      {push.enabled && (
-        <div className="flex items-center gap-2 px-1">
-          <button type="button" onClick={push.test} className="min-h-9 rounded-full border border-[#E2D6C5] dark:border-[#364062] bg-white dark:bg-[#232B45] px-4 font-semibold text-[#6E5D52] dark:text-[#C5CDE3] hover:bg-[#FAF5EE] dark:hover:bg-[#2B3554]">{t('settings.push.test')}</button>
-          <span className="text-[#7D6D61] dark:text-[#A4AECC]">{t('settings.push.testnote')}</span>
-        </div>
-      )}
-      {push.message && <p role="status" className="px-1 text-[#6E5D52] dark:text-[#A4AECC]">{translateServerNotice(push.message, t)}</p>}
-    </div>
-  );
-}
-
-/** Which language the microphone listens for. Cantonese with English words is the default and works best for that way of talking. */
 export function LanguagePanel() {
   const { t, lang } = useT();
   return (
@@ -189,6 +182,76 @@ export function VoicePanel({ supported }: { supported: boolean }) {
   );
 }
 
+// ── Notifications ────────────────────────────────────────────────────
+// When setting up alerts, check whether the device can receive them and offer a test once they are enabled.
+
+/** Lock-screen notifications for rooms that need an approval or have finished. */
+export function PushPanel({ push }: { push: PushControl }) {
+  const { t } = useT();
+  const reason = !push.bridgeReady ? t('settings.push.bridge') : push.support.ok ? undefined : t(({ insecure: 'settings.push.insecure', 'not-installed': 'settings.push.notinstalled', unsupported: 'settings.push.unsupported', denied: 'settings.push.denied' } as const)[push.support.reason]);
+  return (
+    <div className="space-y-2">
+      <Toggle icon={<Bell className="h-4 w-4" />} title={t('settings.push.title')}
+        detail={t('settings.push.detail')}
+        on={push.enabled} disabled={Boolean(reason) || push.busy} onChange={on => void (on ? push.enable() : push.disable())} />
+      {reason && <p role="status" className="px-1 text-[#8D3F48] dark:text-[#F09AA6]">{reason}</p>}
+      {push.enabled && (
+        <div className="flex items-center gap-2 px-1">
+          <button type="button" onClick={push.test} className="min-h-9 rounded-full border border-[#E2D6C5] dark:border-[#364062] bg-white dark:bg-[#232B45] px-4 font-semibold text-[#6E5D52] dark:text-[#C5CDE3] hover:bg-[#FAF5EE] dark:hover:bg-[#2B3554]">{t('settings.push.test')}</button>
+          <span className="text-[#7D6D61] dark:text-[#A4AECC]">{t('settings.push.testnote')}</span>
+        </div>
+      )}
+      {push.message && <p role="status" className="px-1 text-[#6E5D52] dark:text-[#A4AECC]">{translateServerNotice(push.message, t)}</p>}
+    </div>
+  );
+}
+
+// ── Room defaults and compaction ─────────────────────────────────────
+// Use these controls to choose launch defaults or turn automatic compaction on for a room or all rooms.
+
+type AutoCompactControl = {
+  room?: Pick<TerminalRoom, 'id' | 'roomName' | 'modelId' | 'live' | 'autoCompact' | 'autoCompactActive'>;
+  disabled: boolean;
+  onChange: (roomId: string, enabled: boolean) => void;
+  /** Present when the Bridge supports the all-rooms switch. */
+  all?: { enabled: boolean; onChange: (enabled: boolean) => void };
+};
+
+const autoCompactDetails = {
+  AGY: 'settings.autoCompact.agy',
+  CODEX: 'settings.autoCompact.codex',
+  CLAUDE: 'settings.autoCompact.claude',
+} as const;
+
+function RoomAutoCompact({ room, disabled, onChange, all }: AutoCompactControl) {
+  const { t } = useT();
+  const title = t('settings.autoCompact.title');
+  const icon = <Minimize2 aria-hidden="true" className="h-4 w-4" />;
+  if (!room && all?.enabled) return null;
+  if (!room) {
+    return <div className="flex items-start gap-2.5 rounded-2xl border border-[#E6DCD0] bg-white p-3.5 dark:border-[#2E3654] dark:bg-[#1E253D]">
+      <span className="mt-0.5 shrink-0 text-[#D9828B] dark:text-[#EFA4B2]">{icon}</span>
+      <div className="min-w-0">
+        <div className="font-bold text-[#4A3E36] dark:text-[#ECE7DF]">{title}</div>
+        <div className="mt-0.5 text-[#7D6D61] dark:text-[#A4AECC]">{t('settings.autoCompact.selectRoom')}</div>
+      </div>
+    </div>;
+  }
+  const enabled = room.autoCompact === true;
+  const detail = t(room.live && room.autoCompactActive && enabled ? 'settings.autoCompact.active' : all?.enabled ? 'settings.autoCompact.byAll' : autoCompactDetails[room.modelId], { room: room.roomName });
+  return <Toggle icon={icon} title={title} detail={detail} on={enabled} disabled={disabled || all?.enabled} onChange={value => onChange(room.id, value)} />;
+}
+
+function AutoCompactPanel(control: AutoCompactControl) {
+  const { t } = useT();
+  const { all, disabled } = control;
+  return <div className="space-y-2">
+    {all && <Toggle icon={<Minimize2 aria-hidden="true" className="h-4 w-4" />} title={t('settings.autoCompact.allTitle')}
+      detail={t('settings.autoCompact.allDetail')} on={all.enabled} disabled={disabled} onChange={all.onChange} />}
+    <RoomAutoCompact {...control} />
+  </div>;
+}
+
 /** Which CLIs start without asking for approval, for every room nobody chose a mode for. */
 export function LaunchModePanel({ characters, modes, onDefault }: {
   characters: Record<CLIModelId, CharacterProfile>; modes: LaunchModes; onDefault: (modelId: CLIModelId, auto: boolean) => void;
@@ -204,6 +267,9 @@ export function LaunchModePanel({ characters, modes, onDefault }: {
     </div>
   );
 }
+
+// ── Restart the Bridge ───────────────────────────────────────────────
+// When a restart is available, show the action and explain what will happen to active rooms.
 
 /** Describes the effect before a privileged restart. Danger tone gives Cancel initial focus. */
 export function restartConfirmOptions(t: (key: I18nKey, params?: Record<string, string | number>) => string, activeCount: number): ConfirmOptions {
@@ -227,52 +293,11 @@ export function RestartButton({ supported, pending, onRestart }: { supported: bo
   </button>;
 }
 
-type AutoCompactControl = {
-  room?: Pick<TerminalRoom, 'id' | 'roomName' | 'modelId' | 'live' | 'autoCompact' | 'autoCompactActive'>;
-  disabled: boolean;
-  onChange: (roomId: string, enabled: boolean) => void;
-  /** Present when the Bridge supports the all-rooms switch. */
-  all?: { enabled: boolean; onChange: (enabled: boolean) => void };
-};
-
-const autoCompactDetails = {
-  AGY: 'settings.autoCompact.agy',
-  CODEX: 'settings.autoCompact.codex',
-  CLAUDE: 'settings.autoCompact.claude',
-} as const;
-
-function AutoCompactPanel(control: AutoCompactControl) {
-  const { t } = useT();
-  const { all, disabled } = control;
-  return <div className="space-y-2">
-    {all && <Toggle icon={<Minimize2 aria-hidden="true" className="h-4 w-4" />} title={t('settings.autoCompact.allTitle')}
-      detail={t('settings.autoCompact.allDetail')} on={all.enabled} disabled={disabled} onChange={all.onChange} />}
-    <RoomAutoCompact {...control} />
-  </div>;
-}
-
-function RoomAutoCompact({ room, disabled, onChange, all }: AutoCompactControl) {
-  const { t } = useT();
-  const title = t('settings.autoCompact.title');
-  const icon = <Minimize2 aria-hidden="true" className="h-4 w-4" />;
-  if (!room && all?.enabled) return null;
-  if (!room) {
-    return <div className="flex items-start gap-2.5 rounded-2xl border border-[#E6DCD0] bg-white p-3.5 dark:border-[#2E3654] dark:bg-[#1E253D]">
-      <span className="mt-0.5 shrink-0 text-[#D9828B] dark:text-[#EFA4B2]">{icon}</span>
-      <div className="min-w-0">
-        <div className="font-bold text-[#4A3E36] dark:text-[#ECE7DF]">{title}</div>
-        <div className="mt-0.5 text-[#7D6D61] dark:text-[#A4AECC]">{t('settings.autoCompact.selectRoom')}</div>
-      </div>
-    </div>;
-  }
-  const enabled = room.autoCompact === true;
-  const detail = t(room.live && room.autoCompactActive && enabled ? 'settings.autoCompact.active' : all?.enabled ? 'settings.autoCompact.byAll' : autoCompactDetails[room.modelId], { room: room.roomName });
-  return <Toggle icon={icon} title={title} detail={detail} on={enabled} disabled={disabled || all?.enabled} onChange={value => onChange(room.id, value)} />;
-}
+// ── Settings dialog ──────────────────────────────────────────────────
+// When Settings opens, show the controls that the connected Bridge supports.
 
 export function SettingsModal({ characters, soundEnabled, onSound, push, launchModes, onDefaultMode, voiceSupported,
   phonePreview, onPhonePreview, onClose, restartSupported = false, restartPending = false, restartMessage, onRestart, autoCompact, storage }: {
-  /** Where a new room starts; the Bridge sends it, and an older Bridge does not. */
   launchModes?: LaunchModes | null; onDefaultMode?: (modelId: CLIModelId, auto: boolean) => void;
   /** The Mac can write recordings out as text. */
   voiceSupported?: boolean;
@@ -302,9 +327,12 @@ export function SettingsModal({ characters, soundEnabled, onSound, push, launchM
   );
 }
 
+// ── Phone connection ─────────────────────────────────────────────────
+// When someone wants to open the Bridge on a phone, show the connection link and its QR code.
+
 export function TailscaleQrModal({ tailscaleUrl, onClose }: { tailscaleUrl: string | null; onClose: () => void }) {
   const { t } = useT();
-  const [copied, setCopied] = useState(false);
+  const { copy, status } = useCopyFeedback(1800);
   const url = tailscaleUrl ? new URL('/', tailscaleUrl).href : null;
   return (
     <Shell title={t('settings.tailscale.title')} icon={<QrCode className="h-5 w-5 text-[#D9828B] dark:text-[#EFA4B2]" />} onClose={onClose}>
@@ -314,9 +342,12 @@ export function TailscaleQrModal({ tailscaleUrl, onClose }: { tailscaleUrl: stri
           <p className="mt-2 text-[#7D6D61] dark:text-[#A4AECC]">{t('settings.tailscale.instructions')}</p>
           <div className="mt-3 flex w-full items-center gap-2">
             <input aria-label={t('settings.tailscale.url')} readOnly value={url} className="min-w-0 flex-1 rounded-full border border-[#E6DCD0] dark:border-[#343D5E] bg-[#F7F2E9] dark:bg-[#141A2C] px-3 py-1.5 font-mono text-[#4A3E36] dark:text-[#ECE7DF]" />
-            {navigator.clipboard && <button type="button" onClick={() => { void navigator.clipboard.writeText(url).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1800); }).catch(() => {}); }}
-              className="rounded-full bg-[#F3ECE1] dark:bg-[#27304D] dark:text-[#ECE7DF] px-3 py-1.5">{copied ? t('settings.tailscale.copied') : t('settings.tailscale.copy')}</button>}
+            <button type="button" onClick={() => void copy(url)}
+              className="rounded-full bg-[#F3ECE1] dark:bg-[#27304D] dark:text-[#ECE7DF] px-3 py-1.5">{status === 'copied' ? t('settings.tailscale.copied') : t('settings.tailscale.copy')}</button>
           </div>
+          <p role="status" className={status === 'error' ? 'mt-2 text-[#8D3F48] dark:text-[#F09AA6]' : 'sr-only'}>
+            {status === 'copied' ? t('settings.tailscale.copied') : status === 'error' ? t('copy.error') : ''}
+          </p>
         </> : <p className="text-sm">{t('settings.tailscale.missing')}</p>}
       </div>
       <p className="rounded-2xl border border-[#C5DEC8] dark:border-[#345443] bg-[#E6F2E8] dark:bg-[#192A22] p-3.5 leading-relaxed text-[#3F6846] dark:text-[#A7D3B1]">

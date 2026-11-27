@@ -1,3 +1,13 @@
+// Connect workbench tickets to rooms, CLI hooks and Bridge maintenance.
+// Contents:
+// - Choose a role recipient
+// - Check receipts and resolve ticket recipients
+// - Deliver and handle workbench requests
+// - Close a lead's outstanding tickets
+// - Wake fixed recipients
+// - Restore context and deliver hook tickets
+// - Wake rooms and report stalled work
+
 import type { BenchRoutingError, ClientEvent, RoleRouteReceipt, RoleRouteRule, ServerEvent } from '../src/types/bridge';
 import type { CharacterProfile, CLIModelId, GroupChat, TerminalRoom } from '../src/types/guild';
 import { execFile, execFileSync } from 'node:child_process';
@@ -13,8 +23,10 @@ import type { Scope } from './access';
 import { findRoom, lowDispatchQuota, remainingDispatchQuota, resolveTarget, type DispatchQuota } from './handoff';
 import { claimedWorktree } from './worktree';
 import { bridgeConfig } from './config';
-import type { BridgeCheckout } from './auto-worktree';
+import type { BridgeCheckout, WorktreeCapacity } from './auto-worktree';
+import { captureCheckout, checkoutNow, type CheckoutCompletion } from './bench-completion';
 
+// Choose a role recipient: select an eligible group member from one Bridge snapshot.
 export type RoleRoomState = Readonly<{
   room: TerminalRoom;
   inactive: boolean;
@@ -111,6 +123,7 @@ export function pickRoleRoom(input: RolePickInput): RolePick {
   };
 }
 
+// Check receipts and resolve ticket recipients: use the Bridge's current rooms and groups.
 /** What the Bridge gives the workbench: its rooms and groups, and ways to tell the people watching. */
 export interface BenchDeps {
   bench: Bench;
@@ -126,7 +139,9 @@ export interface BenchDeps {
   successors?: () => Record<string, string>;
   /** A ticket moved between two rooms (for the heart in the group view). */
   flow?: (fromRoomId: string, toRoomId: string, kind: 'task' | 'done', ticket: number) => void;
+  gateResultDir?: string;
   createWorktree?: (ticketId: number, repo: string, ref?: string) => Promise<BridgeCheckout>;
+  worktreeCapacity?: () => WorktreeCapacity | undefined;
   roleRouting?: {
     characters(): Partial<Record<CLIModelId, CharacterProfile>>;
     state(room: TerminalRoom): Omit<RoleRoomState, 'room' | 'openWork'>;
@@ -157,15 +172,31 @@ export function proveReceipt(receipt: string | undefined, now = () => new Date()
   try {
     const stat = lstatSync(path);
     if (stat.isDirectory()) return { path: raw, at, state: 'dir' };
-    if (!stat.isFile()) return { path: raw, at, state: 'missing' };
-    return { path: raw, at, state: 'file', bytes: stat.size, ...(stat.size <= hashLimit ? { sha256: createHash('sha256').update(readFileSync(path)).digest('hex') } : {}) };
-  } catch { return { path: raw, at, state: 'missing' }; }
+    if (!stat.isFile()) return { path: raw, at, state: 'unreadable' };
+    if (stat.size > hashLimit) return { path: raw, at, state: 'file', bytes: stat.size };
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const file = fstatSync(fd);
+      if (!file.isFile()) return { path: raw, at, state: 'unreadable' };
+      const proof: ReceiptProof = { path: raw, at, state: 'file', bytes: file.size };
+      if (file.size <= hashLimit) {
+        const buffer = Buffer.alloc(file.size + 1);
+        const count = readSync(fd, buffer, 0, buffer.length, 0);
+        if (count === file.size) proof.sha256 = createHash('sha256').update(buffer.subarray(0, count)).digest('hex');
+      }
+      return proof;
+    } finally { closeSync(fd); }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return { path: raw, at, state: code === 'ENOENT' || code === 'ENOTDIR' ? 'missing' : 'unreadable' };
+  }
 }
 
 /** How the receipt looks now, next to how it looked when the ticket was finished. */
 export function receiptNow(proof: ReceiptProof) {
   const now = proveReceipt(proof.path);
   if (!now || now.state === 'missing') return proof.state === 'missing' ? `回報位置仍然唔存在：${proof.path}` : `⚠ 回報位置而家已經唔存在（完成時存在）：${proof.path}`;
+  if (now.state === 'unreadable') return `⚠ 回報位置而家讀唔到：${proof.path}`;
   if (proof.sha256 && now.sha256 && proof.sha256 !== now.sha256) return `⚠ 回報位置內容自完成後有變（sha256 ${proof.sha256.slice(0, 12)}… → ${now.sha256.slice(0, 12)}…）：${proof.path}`;
   return `回報位置仍在${proof.sha256 && now.sha256 ? '，內容同完成時一樣' : ''}：${proof.path}`;
 }
@@ -320,6 +351,7 @@ function taskBodyWithBoard(body: string, shared: GroupChat[], preserveBody = fal
   return `${body.replace(/\r\n?/g, '\n').trim().slice(0, benchLimits.body - line.length - 1).trimEnd()}\n${line}`;
 }
 
+// Deliver and handle workbench requests: save tickets and report their delivery state.
 /** How a ticket reaches its recipient: through its hook while it works, a wake-up message while it is idle, or held past the hourly limit. */
 function deliver(deps: BenchDeps, ticket: Ticket, fromRoom: TerminalRoom): Pick<Result, 'lines' | 'ping' | 'wake'> {
   const target = ticket.fixed ? fixedRecipient(deps, ticket, 'start') : roomOf(deps, ticket.to.sessionId);
@@ -347,6 +379,45 @@ function listLine(ticket: Ticket) {
 }
 
 type BenchRequest = Record<string, unknown> & { requestId: string; action: string };
+
+async function completeBenchRequest(deps: BenchDeps, event: BenchRequest, checked?: AcceptanceResult) {
+  let completion: CheckoutCompletion | undefined;
+  const ticket = deps.bench.get(Number(event.id));
+  if (ticket && (ticket.kind === 'task' || ticket.kind === 'reply') &&
+      (ticket.status !== 'done' || ticket.expiredAt) && !ticket.cancelledAt &&
+      ticket.worktree?.state !== 'pending' && ticket.worktree?.state !== 'failed') {
+    // Validate the recipient before reading a ticket's checkout. The normal
+    // completion path validates again after the asynchronous Git operations.
+    const found = typeof event.from === 'string' ? findRoom(deps.rooms(), event.from) : undefined;
+    if (found && !('error' in found) && isTicketRecipient(ticket, found.room) &&
+        (!isSystemSender(ticket.from) || currentTidyRecipient(deps, ticket, found.room))) {
+      const directory = deps.gateResultDir ?? process.env.KOMOREBI_GATE_DIR ?? '/Volumes/Komorebi/Review/verify-gate';
+      completion = await captureCheckout(ticket.worktree?.path ?? ticket.repo, deps.bench.gateResultPaths(keysOf(found.room)), directory).catch(() => undefined);
+    }
+  }
+  return benchAction(deps, event, undefined, checked, false, completion);
+}
+
+async function showBenchRequest(deps: BenchDeps, event: BenchRequest) {
+  const result = benchAction(deps, event);
+  if (!result.ok) return result;
+  const ticket = deps.bench.get(Number(event.id));
+  if (ticket?.kind !== 'done' || typeof event.from !== 'string') return result;
+  const found = findRoom(deps.rooms(), event.from);
+  if ('error' in found || !isTicketRecipient(ticket, found.room)) return result;
+
+  const proof = ticket.completion?.receipt ?? (ticket.replyTo === undefined ? undefined : deps.bench.get(ticket.replyTo)?.receiptProof);
+  const current = proof && proveReceipt(proof.path);
+  const receipt = current?.state === 'missing' ? 'receipt 唔存在' :
+    !proof?.sha256 || !current?.sha256 ? 'receipt UNKNOWN' :
+    proof.sha256 === current.sha256 ? 'receipt 一致' : 'receipt hash 已變';
+  const git = await checkoutNow(ticket.completion?.checkout);
+  return { ...result, lines: [...result.lines, `核對：${[...git, receipt].join('｜')}`] };
+}
+
+function isTicketRecipient(ticket: Ticket, room: TerminalRoom) {
+  return matchesParty(room, ticket.to) && (!ticket.fixed || ticket.fixed.toRoomId === room.id);
+}
 
 /** Only the local CLI supplies a caller directory. Failed verification leaves the ordinary claim usable. */
 export async function benchRequest(deps: BenchDeps, event: BenchRequest): Promise<Result> {
@@ -400,12 +471,14 @@ export async function benchRequest(deps: BenchDeps, event: BenchRequest): Promis
         await git('show-ref', '--verify', '--quiet', ref);
         if (commit) await git('merge-base', '--is-ancestor', commit, ref);
       }
-      return benchAction(deps, { ...event, action: 'done', note: JSON.stringify({ report, review: 'pending', verification: 'Bridge 已核對基本資料，正式驗收待 Reviewer／Owner 判定。' }), receipt }, undefined, report.result);
+      return await completeBenchRequest(deps, { ...event, action: 'done', note: JSON.stringify({ report, review: 'pending', verification: 'Bridge 已核對基本資料，正式驗收待 Reviewer／Owner 判定。' }), receipt }, report.result);
     } catch (error) {
       const reason = error instanceof Error && !('cmd' in error) ? error.message : '工單 repo 無法核實 SHA、分支或所屬關係。';
       return { type: 'BENCH_RESULT', ok: false, requestId: event.requestId, lines: [reason] };
     }
   }
+  if (event.action === 'done') return completeBenchRequest(deps, event);
+  if (event.action === 'show') return showBenchRequest(deps, event);
   if (event.action !== 'claim' || typeof event.claimCwd !== 'string') return benchAction(deps, event);
   const cwd = event.claimCwd;
   let checkout: { roomId: string; repoPath: string; path: string } | undefined;
@@ -418,19 +491,21 @@ export async function benchRequest(deps: BenchDeps, event: BenchRequest): Promis
 }
 
 /** A reply can still need attention, but cannot hold back the last task's closeout reminder. */
-function isLastLeadTask(deps: BenchDeps, ticket: Ticket | undefined) {
-  if (!ticket || ticket.kind !== 'task' || ticket.status === 'done' || isSystemSender(ticket.from)) return false;
+function leadCloseout(deps: BenchDeps, ticket: Ticket | undefined) {
+  if (!ticket || ticket.kind !== 'task' || ticket.status === 'done' || isSystemSender(ticket.from)) return;
   const group = deps.groups().find(item => item.id === ticket.groupId);
   const lead = group?.orchestratorRoomId && deps.rooms().find(room => room.id === group.orchestratorRoomId);
   if (!group || !lead || !memberOf(group, lead) || !matchesParty(lead, ticket.from) ||
-      (ticket.fixed && ticket.fixed.fromRoomId !== lead.id)) return false;
-  return !keysOf(lead).some(key => deps.bench.openFrom(key).some(other => other.groupId === group.id &&
-    other.id !== ticket.id && !isSystemSender(other.from) && other.from.modelId === lead.modelId &&
-    (!other.fixed || other.fixed.fromRoomId === lead.id)));
+      (ticket.fixed && ticket.fixed.fromRoomId !== lead.id)) return;
+  const outgoing = (groupId: string) => openLeadTickets(deps, groupId, lead).filter(other =>
+    other.id !== ticket.id && !isSystemSender(other.from) && matchesParty(lead, other.from) &&
+    (!other.fixed || other.fixed.fromRoomId === lead.id));
+  if (outgoing(group.id).some(other => other.kind === 'task' && other.worktree?.state !== 'failed')) return;
+  return groupsOf(deps, lead).flatMap(item => outgoing(item.id)).sort((a, b) => a.id - b.id).map(listLine);
 }
 
 /** One workbench request from `komorebi-room bench …`. */
-export function benchAction(deps: BenchDeps, event: BenchRequest, checkout?: { roomId: string; repoPath: string; path: string }, checked?: AcceptanceResult, personaNotice = false): Result {
+export function benchAction(deps: BenchDeps, event: BenchRequest, checkout?: { roomId: string; repoPath: string; path: string }, checked?: AcceptanceResult, personaNotice = false, completion?: CheckoutCompletion): Result {
   const result = (lines: string[], extra: Partial<Result> = {}): Result => ({ type: 'BENCH_RESULT', requestId: event.requestId, ok: true, lines, ...extra });
   try {
     const me = party(deps, event.from, '你自己的房（--from）');
@@ -564,7 +639,7 @@ export function benchAction(deps: BenchDeps, event: BenchRequest, checkout?: { r
       case 'show': {
         const ticket = mine(event.id);
         if (keysOf(me.room).includes(ticket.to.sessionId)) deps.bench.markSeen(ticket.id);
-        return result([ticketText(ticket, deps.tool), ...(ticket.receiptProof ? [receiptNow(ticket.receiptProof)] : [])]);
+        return result([ticketText(ticket, deps.tool, isTicketRecipient(ticket, me.room)), ...(ticket.receiptProof ? [receiptNow(ticket.receiptProof)] : [])]);
       }
       case 'lesson-pending': {
         const ticket = mine(event.id);
@@ -588,7 +663,7 @@ export function benchAction(deps: BenchDeps, event: BenchRequest, checkout?: { r
         const proof = proveReceipt(text(event.receipt));
         if (checked && (!proof || proof.state !== 'file' || !proof.sha256)) throw new BenchError('驗收證據須為可讀普通檔案，最大 20 MiB；可提交摘要並引用原始記錄。');
         const { ticket, notice } = deps.bench.done(Number(event.id), addressed && keysOf(me.room).includes(addressed) ? addressed : me.party.sessionId,
-          text(event.note), text(event.receipt), proof, checked, isLastLeadTask(deps, original));
+          text(event.note), text(event.receipt), proof, checked, { checkout: completion, closeout: leadCloseout(deps, original) });
         if (ticket.kind === 'notice') return result([`通知 #${ticket.id} 已讀，自動結案，毋須再做任何事。`]);
         if (!isSystemSender(ticket.from)) for (const key of keysOf(me.room)) deps.bench.release(ticket.groupId, key);
         if (isSystemSender(ticket.from)) return result([`#${ticket.id} 已完成，結果已保存。`]);
@@ -627,12 +702,14 @@ export function benchAction(deps: BenchDeps, event: BenchRequest, checkout?: { r
         return result([count ? `已釋放 ${count} 項認領。` : '冇需要釋放的認領。']);
       }
       case 'overview': {
+        const capacity = deps.worktreeCapacity?.();
         const lines = groupsOf(deps, me.room).flatMap(group => [
           `── ${group.name} ──`,
           ...deps.bench.claims(group.id).map(claim => `認領：${claim.scope}（${partyName(claim.by)}，${claim.at}）`),
           ...deps.bench.open(group.id).map(listLine),
         ]);
-        return result(lines.length ? lines : ['你的房不在任何群組。']);
+        const usage = capacity ? `Bridge worktree：已用 ${capacity.used}/${capacity.limit}，剩餘 ${capacity.remaining}（只供參考；建立時重新核對）。` : 'Bridge worktree：UNKNOWN（無法讀取名額）。';
+        return result([usage, ...(lines.length ? lines : ['你的房不在任何群組。'])]);
       }
       default: throw new BenchError(`未知的 bench 動作：${event.action}`);
     }
@@ -646,21 +723,19 @@ export function benchAction(deps: BenchDeps, event: BenchRequest, checkout?: { r
   }
 }
 
-/**
- * The crown's final report says the run is DONE: every task or reply it sent in this group that is still open is called off,
- * so no member keeps working on it and nothing waits for the three-hour close. Returns the cancelled ticket ids.
- */
+// Close a lead's outstanding tickets: cancel unfinished work after the final report.
 /** The tickets the lead sent that a member still works on. */
 export function openLeadTickets(deps: BenchDeps, groupId: string, lead: TerminalRoom) {
   const keys = keysOf(lead);
   return deps.bench.open(groupId).filter(ticket => (ticket.kind === 'task' || ticket.kind === 'reply') && !isSystemSender(ticket.from) && keys.includes(ticket.from.sessionId));
 }
 
-export function cancelLeadTickets(deps: BenchDeps, groupId: string, lead: TerminalRoom): number[] {
+/** A final DONE report cancels the lead's open work, except tickets explicitly kept or for persona notices. */
+export function cancelLeadTickets(deps: BenchDeps, groupId: string, lead: TerminalRoom, keep: readonly number[] = []): number[] {
   const keys = keysOf(lead);
   const cancelled: number[] = [];
   for (const ticket of openLeadTickets(deps, groupId, lead)) {
-    if (ticket.purpose === 'persona-notice') continue;
+    if (ticket.purpose === 'persona-notice' || keep.includes(ticket.id)) continue;
     try {
       if (!deps.bench.cancel(ticket.id, keys, '隊長 ♛ 已交最後報告（RESULT — DONE）', 'lead_final_report')) continue;
     } catch { continue; }
@@ -672,6 +747,7 @@ export function cancelLeadTickets(deps: BenchDeps, groupId: string, lead: Termin
   return cancelled;
 }
 
+// Wake fixed recipients: recheck the ticket and room before each input phase.
 type FixedWakeEvent = Extract<ClientEvent, { type: 'BENCH_WAKE' }>;
 type WakeInputPhase = 'paste' | 'submit';
 type WakeRooms = (event: Extract<ClientEvent, { type: 'START' | 'INPUT' }>, reply: (event: ServerEvent) => void,
@@ -732,6 +808,7 @@ export async function runFixedBenchWake(
   }
 }
 
+// Restore context and deliver hook tickets: keep injected state within the hook envelope.
 const MAX_BYTES = 1800; // Leave space for the hook JSON envelope and escaping.
 const compact = (value: string | undefined, max = 120) => {
   const clean = (value ?? '').replace(/[\r\n\t]+/g, ' ').trim();
@@ -879,11 +956,7 @@ export function benchHook(deps: BenchDeps, cli: string, body: unknown) {
 }
 
 
-/**
- * A member came back to its prompt with tickets still unread (it finished before its hook could pass them on, or it was
- * busy without the hook): the wake-up message to send it now, or nothing. With the hook the message only names them and
- * the hook adds them in full; without it the tickets themselves go in the message.
- */
+// Wake rooms and report stalled work: retry eligible tickets and notify the lead when needed.
 /**
  * A recipient whose CLI is closed holds tickets nobody has read. The sender's wake-up tries once, for about half a minute; when the
  * CLI is slow to come back that try is over and nothing else would ever start it. Say whether this closed room should be started now,
@@ -914,6 +987,7 @@ export function sendFromBridge(deps: BenchDeps, event: BenchRequest, personaNoti
   return result;
 }
 
+/** A non-Codex room without a hook gets full tickets; other rooms get a list and a workbench path. */
 export function idleWake(deps: BenchDeps, room: TerminalRoom) {
   const session = room.sessionId ?? room.id;
   if (!room.live || !room.ready || room.pendingApproval || room.pendingQuestion || room.menu) return;
@@ -1000,11 +1074,6 @@ export function stalledWake(deps: BenchDeps, room: TerminalRoom, idleFor: number
   };
 }
 
-/** A task that was reminded the full number of times and still sits unfinished is reported once: to the group lead's room and to the Founder. */
-/**
- * A ticket nobody has read for as long as a stuck one is given (a closed recipient, or a wake-up that never got through) is
- * reported to the group's lead, once. This looks at the tickets, not the rooms, because the recipient may be closed.
- */
 /** This entry point is internal to Bridge maintenance, never a public bench action. */
 export function dispatchRsiTidy(deps: BenchDeps, groupId: string) {
   const group = deps.groups().find(item => item.id === groupId);
@@ -1016,6 +1085,7 @@ export function dispatchRsiTidy(deps: BenchDeps, groupId: string) {
   return deps.bench.dispatchTidy(groupId, partyOf(lead), lead.id);
 }
 
+/** Report long-unread tickets to their group lead, including tickets for closed rooms. */
 export function escalateUnread(deps: BenchDeps): number[] {
   // This runs on the Bridge's maintenance tick even when no new work comes in.
   try { deps.bench.sweep(); } catch { return []; }
@@ -1042,6 +1112,7 @@ export function escalateUnread(deps: BenchDeps): number[] {
   return reported;
 }
 
+/** Report work that remains unfinished after all reminders to the lead and Founder. */
 export function escalateStalled(deps: BenchDeps, room: TerminalRoom, idleFor: number) {
   const { idleMs, nudges } = benchLimits.stall;
   if (!room.live || !room.ready || room.status !== 'idle' || room.pendingApproval || room.pendingQuestion || room.menu || idleFor < idleMs) return [];

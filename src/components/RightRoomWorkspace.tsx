@@ -1,5 +1,7 @@
-import { CopyTurnButton } from './CopyTurnButton';
-import { ModelEffortPicker } from './ModelEffortPicker';
+// Contents
+// Copy room details
+// Show and control a room
+
 import { RejectReason } from './RejectReason';
 import { ApprovalSeal, ComposerActionButton, GuildActionButton, ScrollToLatestButton } from './GuildActions';
 import { useT } from '../i18n/useLang';
@@ -9,17 +11,13 @@ import {
   X,
   ShieldAlert,
   CheckCircle2,
-  Minimize2,
-  FlaskConical,
   Eye,
   GitBranch,
-  TerminalSquare,
   Folder,
   Copy,
   Check,
 } from 'lucide-react';
 import { CharacterProfile, TerminalRoom } from '../types/guild';
-import { PermissionButton } from './PermissionButton';
 import { DaySeparator, MessageBubble } from './MessageBubble';
 import { ControlBar } from './ControlBar';
 import { bubbleRuns } from '../utils/bubbleRuns';
@@ -31,16 +29,34 @@ import { GUILD_HALL_BANNER, GUILD_HALL_NIGHT_BANNER } from '../data/initialGuild
 import { useTheme } from '../utils/theme';
 import { QuestionCard } from './QuestionCard';
 import { WorkingIndicator } from './WorkingIndicator';
-import { MessageImages } from './ImagePreviews';
-import { Markdown } from './Markdown';
 import { HistoryNote } from './HistoryNote';
 import { WorktreeLayer } from './WorktreePanel';
 import type { GhCall } from './github/GitHubPanel';
 import { useAutosize } from '../utils/useAutosize';
 import { useConversationScroll } from '../utils/useConversationScroll';
 import { approvalChoiceLabel } from '../utils/approvalChoices';
-import { composerBlock, composerHint, hasResetVouchers, roomCapabilities, roomStatusLabel, useEscape } from '../utils/roomUi';
+import { composerBlock, composerHint, hasResetVouchers, roomCapabilities, roomStatusLabel, useCopyFeedback, useEscape } from '../utils/roomUi';
 
+// Copy room details
+// Report the result of copying the full repository path or session ID.
+function CopyValueButton({ value, label }: { value: string; label: string }) {
+  const { t } = useT();
+  const { copy, status } = useCopyFeedback(1500);
+  const feedback = status === 'copied' ? t('workspace.copied') : status === 'error' ? t('copy.error') : '';
+  return (
+    <span className="relative inline-flex shrink-0">
+      <button type="button" aria-label={feedback || label} title={feedback || label}
+        onClick={() => void copy(value)}
+        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#8C7A6E] hover:bg-[#F3ECE1] dark:text-[#98A3C2] dark:hover:bg-[#27304D]">
+        {status === 'copied' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      </button>
+      <span role="status" className={status === 'error' ? 'absolute right-0 top-full z-20 w-max max-w-52 rounded-md bg-[#FFF5F6] px-2 py-1 font-sans text-xs text-[#8D3F48] shadow-sm dark:bg-[#2C1A23] dark:text-[#F09AA6]' : 'sr-only'}>{feedback}</span>
+    </span>
+  );
+}
+
+// Show and control a room
+// The desktop workspace keeps the selected room's transcript, terminal controls, and composer together.
 interface RightRoomWorkspaceProps {
   /** Asks the Mac for this room's folder (changes and files, read only); undefined when the Bridge cannot. */
   worktreeCall?: GhCall;
@@ -55,7 +71,7 @@ interface RightRoomWorkspaceProps {
   onAdditionalApproval: (roomId: string, decision: string) => void;
   onInterrupt: (roomId: string) => void;
   onReject: (roomId: string, reason: string, source: 'desktop' | 'mobile_app') => void;
-  onSendPrompt: (roomId: string, promptText: string, fromMobile?: boolean) => void;
+  onSendPrompt: (roomId: string, promptText: string) => void;
   /** Answers a waiting question inside the CLI itself; false when that is not possible and a message should be sent instead. */
   onAnswerDirect?: (roomId: string, detail?: { choice?: number; choices?: number[]; text?: string; answers?: { choice?: number; choices?: number[]; text?: string }[] }) => boolean;
   onSubmitDraft: (roomId: string, promptText: string) => void;
@@ -68,7 +84,7 @@ interface RightRoomWorkspaceProps {
   approving?: boolean;
   actionMessage?: string;
   actionError?: boolean;
-  onRunCompact: (roomId: string, fromMobile?: boolean) => void;
+  onRunCompact: (roomId: string) => void;
   /** Elapsed time of the current CLI turn, shown while it works. */
   workingElapsed?: string;
   workingStalled?: string;
@@ -128,7 +144,6 @@ export const RightRoomWorkspace: React.FC<RightRoomWorkspaceProps> = ({
 
   const conversationScroll = useConversationScroll(room.id, room.logs.map(entry => `${entry.id}:${entry.text.length}`).join('|'), room.logs[0]?.id, room.logs.at(-1));
 
-  // Filter active CLI's slash commands when user types "/"
   const trimmedStart = promptInput.trimStart();
   const isTypingSlash = trimmedStart.startsWith('/');
   const matchingSlashCommands = matchSlashCommands(room.modelId, promptInput);
@@ -177,11 +192,11 @@ export const RightRoomWorkspace: React.FC<RightRoomWorkspaceProps> = ({
           referrerPolicy="no-referrer"
           className="w-full h-full object-cover opacity-35 dark:opacity-45"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#FBF8F3]/85 via-[#FBF8F3]/70 to-[#FBF8F3]/90 dark:from-[#121624]/82 dark:via-[#151B2E]/64 dark:to-[#121624]/90" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#FBF8F3]/42 via-[#FBF8F3]/34 to-[#FBF8F3]/42 dark:from-[#121624]/48 dark:via-[#151B2E]/36 dark:to-[#121624]/48" />
       </div>
 
-      {/* Slim Minimalist 1-Line Frosted-Glass Room Header floating over the scrollable stream */}
-      <div className="absolute top-0 inset-x-0 z-30 px-5 py-2 border-b border-[#E6DCD0]/70 dark:border-[#6C7BA8]/25 bg-[#FBF8F3]/62 dark:bg-[#101524]/50 backdrop-blur-md dark:backdrop-blur-xl dark:backdrop-saturate-150 shadow-[0_6px_18px_-14px_rgba(90,70,50,0.22)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_8px_24px_-12px_rgba(0,0,0,0.65)] flex items-center justify-between gap-4 shrink-0">
+      {/* Room identity stays visible while the transcript scrolls below. */}
+      <div className="absolute top-0 inset-x-0 z-30 px-5 py-2 bg-transparent flex items-center justify-between gap-4 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <span
             className={`px-2 py-0.5 rounded-full text-xs font-bold font-display border ${accentBadge} shrink-0`}
@@ -210,8 +225,13 @@ export const RightRoomWorkspace: React.FC<RightRoomWorkspaceProps> = ({
         </div>
       </div>
 
-      {/* Spacious Full-Width Terminal Stream over Soft Komorebi Room */}
-      <div ref={conversationScroll.ref} onScroll={conversationScroll.onScroll} className="relative z-10 flex-1 overflow-y-auto px-6 pt-14 pb-4 space-y-2.5 select-text font-sans text-sm">
+      {/* Read recent messages here and load earlier history from the same room. */}
+      <div ref={conversationScroll.ref} onScroll={conversationScroll.onScroll}
+        style={{
+          WebkitMaskImage: 'linear-gradient(to bottom, transparent 0px, transparent 32px, black 64px, black 100%)',
+          maskImage: 'linear-gradient(to bottom, transparent 0px, transparent 32px, black 64px, black 100%)',
+        }}
+        className="relative z-10 flex-1 overflow-y-auto px-6 pt-14 pb-4 space-y-2.5 select-text font-sans text-sm">
         <HistoryNote truncated={room.historyTruncated} count={room.logs.length} onLoadMore={onLoadHistory && (() => onLoadHistory(room.id))} />
         {bubbleRuns(room.logs.map(entry => ({ entry, key: room.id }))).map(item => (
           <Fragment key={item.entry.id}>
@@ -225,9 +245,9 @@ export const RightRoomWorkspace: React.FC<RightRoomWorkspaceProps> = ({
 
       {terminal && <div className="relative z-10 shrink-0 px-5" aria-label={t('workspace.terminal')}>{terminal}</div>}
 
+      {/* Answer terminal questions and approvals above the draft. */}
       <div className="relative z-10 shrink-0 px-5">
         {room.pendingQuestion && <div className="mb-2"><QuestionCard pending={room.pendingQuestion} name={character.characterName} disabled={sending} onAnswer={(text, detail) => { if (!onAnswerDirect?.(room.id, detail)) onSendPrompt(room.id, text); }} /></div>}
-        {/* Clean Inline Approval Card inside Terminal (Icon-Focused) */}
         {room.pendingApproval && (
           <div className="guild-approval p-3.5 flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0 flex-1 flex items-center gap-2">
@@ -275,10 +295,9 @@ export const RightRoomWorkspace: React.FC<RightRoomWorkspaceProps> = ({
         )}
       </div>
 
-      {/* Bottom Composer + Compact Icon Control Bar Below Composer */}
-      <div className="relative z-10 px-5 py-2.5 bg-[#F7F2E9]/50 dark:bg-[#101524]/50 border-t border-[#E6DCD0] dark:border-[#6C7BA8]/25 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_-8px_24px_-12px_rgba(0,0,0,0.65)] shrink-0 space-y-2">
+      {/* Compose messages and choose commands for the room's CLI. */}
+      <div className="relative z-10 px-5 py-2.5 bg-transparent shrink-0 space-y-2">
         {conversationScroll.visible && <ScrollToLatestButton onClick={conversationScroll.goToBottom} newMessages={conversationScroll.newMessages} />}
-        {/* Live CLI "/" Slash Command Autocomplete Palette (Synchronized with Terminal) */}
         {slashOpen && (
           <div className="absolute bottom-full left-5 right-5 mb-2 rounded-2xl bg-[#FFFDF9]/98 border border-[#DFD3C3] shadow-2xl overflow-hidden z-50 backdrop-blur-md dark:bg-[#171D31]/97 dark:border-[#343D5E]">
             <div className="px-3.5 py-1.5 bg-[#F5EFE6] border-b border-[#E5DAC9] flex items-center justify-between text-[11px] dark:bg-[#1C233A] dark:border-[#2C3450]">
@@ -324,7 +343,6 @@ export const RightRoomWorkspace: React.FC<RightRoomWorkspaceProps> = ({
           </div>
         )}
 
-        {/* Row 1: Composer Input with "/" Trigger & Embedded Send Button Inside */}
         {attachmentPreview}
         <form
           onSubmit={handleDesktopSubmit}
@@ -389,16 +407,14 @@ export const RightRoomWorkspace: React.FC<RightRoomWorkspaceProps> = ({
         <p role="status" className={`min-h-4 px-1 text-[11px] ${actionError ? 'text-[#8D3F48] dark:text-[#F09AA6]' : actionMessage ? 'text-[#3F694A] dark:text-[#96C7A3]' : 'text-[#8C7A6E] dark:text-[#98A3C2]'}`}>{actionMessage ?? hint}</p>
 
         <ControlBar room={room} character={character} onCommand={onSendPrompt} settingsDisabled={!capabilities.settings}
-          compact={{ disabled: !capabilities.compact, title: capabilities.reason ? `/compact · ${capabilities.reason}` : t('workspace.compact'), onRun: () => onRunCompact(room.id, false) }}
+          compact={{ disabled: !capabilities.compact, title: capabilities.reason ? `/compact · ${capabilities.reason}` : t('workspace.compact'), onRun: () => onRunCompact(room.id) }}
           terminal={{ open: terminalOpen, onToggle: onToggleTerminal }}
           shield={{ disabled: !room.live || actionPending, autoMode, onMode, onPermissions: () => onSendPrompt(room.id, '/permissions') }}
           cli={controls}
           quota={!hasResetVouchers(character) ? undefined : { label: '×' + character.hp5h.resetVouchers, title: quotaHint(character), onClick: () => onRedeemResetVoucher(character.id, room.id) }} />
       </div>
 
-      {/* =====================================================================
-          POP-UP MODAL 1: Approve / Reject & Full Unified Diff Pop-up
-         ===================================================================== */}
+      {/* Open the full diff from an inline approval that has changes to inspect. */}
       {activePopup === 'approve' && (
         <div
           onClick={() => setActivePopup('none')}
@@ -510,15 +526,3 @@ export const RightRoomWorkspace: React.FC<RightRoomWorkspaceProps> = ({
     </main>
   );
 };
-
-function CopyValueButton({ value, label }: { value: string; label: string }) {
-  const { t } = useT();
-  const [copied, setCopied] = useState(false);
-  return (
-    <button type="button" aria-label={copied ? t('workspace.copied') : label} title={copied ? t('workspace.copied') : label}
-      onClick={() => { void navigator.clipboard?.writeText(value).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {}); }}
-      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#8C7A6E] hover:bg-[#F3ECE1] dark:text-[#98A3C2] dark:hover:bg-[#27304D]">
-      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-    </button>
-  );
-}

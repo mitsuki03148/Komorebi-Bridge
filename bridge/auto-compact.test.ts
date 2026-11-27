@@ -42,7 +42,8 @@ test('a damaged preference file is preserved', async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('room preferences apply to native CLI launches without changing a running or neighbouring session', { timeout: 10_000 }, async () => {
+test('room preferences apply to native CLI launches without changing a running or neighbouring session', { timeout: 10_000 }, async t => {
+  const log = t.mock.method(console, 'error', () => {});
   const root = await mkdtemp(join(tmpdir(), 'komorebi-auto-compact-'));
   const previousPath = process.env.PATH;
   const previousAgyTarget = process.env.AGY_CLI_AUTO_COMPACT_OVERRIDE;
@@ -59,7 +60,7 @@ test('room preferences apply to native CLI launches without changing a running o
     await mkdir(bin);
     const fixture = '#!/bin/sh\nif [ -n "$KOMOREBI_PAIRING_KEY" ]; then exit 16; fi\nwhile IFS= read -r line; do :; done\n';
     await writeFile(join(bin, 'codex'), fixture.replace('while', 'if [ "$1" = "--version" ]; then echo "codex-cli 0.169.0"; exit; fi\nwhile'), { mode: 0o700 });
-    await writeFile(join(bin, 'claude'), fixture.replace('while', 'if [ "$1" = "--help" ]; then echo "   --autocompact <auto|tokens>"; exit; fi\nwhile'), { mode: 0o700 });
+    await writeFile(join(bin, 'claude'), fixture.replace('while', 'if [ "$1" = "--help" ]; then [ -f "$0.probe-fails" ] && exit 9; echo "   --autocompact <auto|tokens>"; exit; fi\nwhile'), { mode: 0o700 });
     await writeFile(join(bin, 'agy'), fixture.replace('while', 'if [ "$1" = "--version" ]; then echo "1.5.15"; exit; fi\necho "FIXTURE_TARGET=${AGY_CLI_AUTO_COMPACT_OVERRIDE:-unset}"\nwhile'), { mode: 0o700 });
     process.env.PATH = `${bin}:${previousPath ?? ''}`;
     process.env.KOMOREBI_PAIRING_KEY = 'fixture-pairing-key';
@@ -102,6 +103,17 @@ test('room preferences apply to native CLI launches without changing a running o
     await start(claude);
     assert.equal(claude.autoCompactActive, true);
     assert.ok(claude.remoteControl.autoLaunchedFlag.includes(`--autocompact 250000 --resume ${claude.sessionId}`));
+    await writeFile(join(bin, 'claude.probe-fails'), '');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await rooms.closeRoomAndWait(claude.id);
+      await start(claude);
+      assert.equal(claude.live, true);
+      assert.equal(claude.autoCompact, true);
+      assert.equal(claude.autoCompactActive, false);
+      assert.doesNotMatch(claude.remoteControl.autoLaunchedFlag, /--autocompact/);
+    }
+    assert.deepEqual(log.mock.calls.map(call => call.arguments).filter(([message]) => message === '無法檢查 CLAUDE Auto Compact 支援'),
+      [['無法檢查 CLAUDE Auto Compact 支援', 9]]);
 
     await set(agy, true);
     const enabledOutput = new Promise<string>(resolve => { agyOutput = resolve; });

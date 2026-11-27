@@ -114,6 +114,56 @@ test('corrupt registry refuses new worktrees', async () => {
   await assert.rejects(store.create(1, f.repo), /無法讀取/);
 });
 
+test('capacity uses the creation guard rules for reservations and existing paths', () => {
+  const f = fixture();
+  const store = new BridgeWorktrees(f.registry, f.base);
+  assert.deepEqual(store.capacity(), { used: 0, limit: 6, remaining: 6 });
+  mkdirSync(f.base);
+  const states = ['reserved', 'created', 'failed', 'created', 'failed'] as const;
+  const entries = states.map((state, index) => ({
+    ticketId: index + 1, repo: f.repo, path: join(f.base, String(index)), branch: `bridge/${index + 1}`,
+    ref: 'HEAD', state, createdAt: new Date(0).toISOString(),
+  }));
+  mkdirSync(entries[1].path);
+  mkdirSync(entries[2].path);
+  writeFileSync(f.registry, JSON.stringify(entries));
+  assert.deepEqual(store.capacity(), { used: 3, limit: 6, remaining: 3 }, 'missing reservation counts; missing created and failed paths do not');
+  writeFileSync(f.registry, JSON.stringify([...entries, ...[6, 7, 8].map(ticketId => ({
+    ticketId, repo: f.repo, path: join(f.base, String(ticketId)), branch: `bridge/${ticketId}`,
+    ref: 'HEAD', state: 'reserved', createdAt: new Date(0).toISOString(),
+  }))]));
+  assert.deepEqual(store.capacity(), { used: 6, limit: 6, remaining: 0 });
+});
+
+test('workbench overview reports aggregate capacity or UNKNOWN without paths', async () => {
+  const f = fixture();
+  const store = new BridgeWorktrees(f.registry, f.base);
+  const lead = { id: 'lead', roomName: 'Lead', modelId: 'CODEX', sessionId: 'lead-session', live: true, ready: true } as TerminalRoom;
+  const member = { id: 'member', roomName: 'Member', modelId: 'AGY', sessionId: 'member-session', live: true, ready: false, benchHooked: true } as TerminalRoom;
+  const group = { id: 'g', name: 'g', members: [{ roomId: lead.id, modelId: lead.modelId }, { roomId: member.id, modelId: member.modelId }] } as GroupChat;
+  const deps: BenchDeps = { bench: new Bench(), rooms: () => [lead, member], groups: () => [group], tool: '/fixture', note: () => {}, notice: () => {},
+    createWorktree: (id, repo, ref) => store.create(id, repo, ref), worktreeCapacity: () => store.capacity() };
+  const overview = () => benchRequest(deps, { requestId: 'r', action: 'overview', from: lead.id });
+  assert.match((await overview()).lines.join('\n'), /已用 0\/6，剩餘 6/);
+  const entries = Array.from({ length: 6 }, (_, index) => ({
+    ticketId: index + 100, repo: f.repo, path: join(f.base, String(index)), branch: `bridge/${index + 100}`,
+    ref: 'HEAD', state: 'reserved', createdAt: new Date(0).toISOString(),
+  }));
+  writeFileSync(f.registry, JSON.stringify(entries));
+  const full = (await overview()).lines.join('\n');
+  assert.match(full, /已用 6\/6，剩餘 0/);
+  assert.ok(!full.includes(f.base), 'the aggregate must not disclose checkout paths');
+  const held = await benchRequest(deps, { requestId: 'r', action: 'send', from: lead.id, to: member.id, repo: f.repo, body: 'work', worktree: 'new' });
+  assert.equal(held.ok, false);
+  assert.match(held.lines.join('\n'), /checkout、ref 同認領.*--repo/);
+  assert.equal(deps.bench.get(1)?.worktree?.state, 'failed');
+  assert.equal(deps.bench.takeNew(member.sessionId!).length, 0);
+  writeFileSync(f.registry, '{broken');
+  const unknown = (await overview()).lines.join('\n');
+  assert.match(unknown, /Bridge worktree：UNKNOWN/);
+  assert.ok(!unknown.includes('已用 6/6'), 'an unreadable registry must not reuse the previous count');
+});
+
 test('failed creation is recorded and never removes an existing worktree', async () => {
   const f = fixture();
   const store = new BridgeWorktrees(f.registry, f.base);

@@ -106,7 +106,7 @@ test('DemoProject opens only the crown once across clients; a crownless entry op
   try {
     const bin = join(tmp, 'bin');
     await mkdir(bin);
-    await writeFile(join(bin, 'codex'), '#!/bin/sh\nprintf "› Ask Codex anything\\nGPT-test high · fixture\\n"\nwhile IFS= read -r line; do :; done\n', { mode: 0o700 });
+    await writeFile(join(bin, 'codex'), '#!/bin/sh\nprintf "› Ask Codex to do anything\\nGPT-test high · fixture\\n"\nwhile IFS= read -r line; do :; done\n', { mode: 0o700 });
     process.env.PATH = `${bin}:${originalPath ?? ''}`;
     const members = await Promise.all(Array.from({ length: 3 }, (_, index) => rooms.ensureGroupMember('CODEX', `成員 ${index + 1}`)));
     for (const member of members) {

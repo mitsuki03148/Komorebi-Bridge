@@ -862,7 +862,7 @@ export const zh = {
   "notice.group.wakeLimit": "已開咗 12 個 CLI，請先關一間。",
   "notice.group.leadSet": "「{group}」的總指揮已設為「{room}」。",
   "notice.folder.changed": "預設工作資料夾已改為 {path}。新房由此開始，舊房不變。",
-  "notice.attachment.expired": "{count} 張超過 {days} 日的上傳圖片已移到垃圾桶。",
+  "notice.attachment.expired": "{count} 個超過 {days} 日的上傳附件已移到垃圾桶。",
   "notice.history.limit": "已經載入到上限（{count} 則）。更早的對話請在 CLI 以原生 /resume 查看。",
   "settings.theme.title": "公會日夜外觀",
   "settings.theme.auto.label": "自動時間",

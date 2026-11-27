@@ -33,7 +33,7 @@ export function RoleCard({ character, modelId, active, waiting, work, unread = f
       onClick={event => { if (!active) burstPetals(event.currentTarget, { count: 3 }); onSelect(); }}
       className={`guild-selection px-2 py-1.5 rounded-[18px] border border-[#E5DAC9]/85 dark:border-[#364062]/85 bg-[#FBF8F3]/80 dark:bg-[#192036]/80 backdrop-blur-md text-left flex items-center gap-2 overflow-hidden cursor-pointer disabled:cursor-default transition-all duration-150 ${
         active
-          ? 'shadow-[0_8px_20px_-10px_color-mix(in_srgb,var(--selection-edge)_55%,transparent),inset_0_1px_0_rgba(255,255,255,0.75)] dark:shadow-[0_8px_22px_-8px_color-mix(in_srgb,var(--selection-edge)_48%,transparent),inset_0_1px_0_rgba(255,255,255,0.12)]'
+          ? 'shadow-[0_0_16px_-2px_color-mix(in_srgb,var(--selection-edge)_55%,transparent),inset_0_0_10px_color-mix(in_srgb,var(--selection-edge)_18%,transparent),inset_0_1px_0_rgba(255,255,255,0.75)] dark:shadow-[0_0_20px_-2px_color-mix(in_srgb,var(--selection-edge)_62%,transparent),inset_0_0_12px_color-mix(in_srgb,var(--selection-edge)_22%,transparent),inset_0_1px_0_rgba(255,255,255,0.16)]'
           : 'opacity-82 hover:opacity-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]'
       }`}
     >
@@ -42,7 +42,7 @@ export function RoleCard({ character, modelId, active, waiting, work, unread = f
           style={active ? { borderColor: 'var(--selection-edge)' } : undefined}
           className={`relative block h-full w-full overflow-hidden rounded-full border-[1.5px] bg-[#FBF7EF] dark:bg-[#212945] transition-all duration-150 ${
             active
-              ? 'shadow-[0_0_12px_-2px_color-mix(in_srgb,var(--selection-edge)_65%,transparent)]'
+              ? 'shadow-[0_0_14px_0px_color-mix(in_srgb,var(--selection-edge)_75%,transparent)]'
               : 'border-[#E7DACA] dark:border-[#364062]'
           }`}
         >
